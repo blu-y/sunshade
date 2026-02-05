@@ -11,7 +11,10 @@
     <link rel="stylesheet" href="../node_modules/pdfjs-dist/web/pdf_viewer.css" />
     <link rel="stylesheet" href="../node_modules/katex/dist/katex.min.css" />
     <style>
-      * { box-sizing: border-box; }
+      button, input, select, textarea {
+        font-family: inherit;
+        font-size: 100%; /* 상속받은 크기 따름 */
+      }
       :root {
         --col-left: 280px;
         --col-right: 420px;
@@ -236,16 +239,28 @@
         align-items: center;
         justify-content: space-between;
       }
+      /* Markdown heading scaling for summary content (clear hierarchy) */
+      .summary-card h1 { font-size: 17px; font-weight: 700; margin: 12px 0 8px; line-height: 1.35; }
+      .summary-card h2 { font-size: 16px; font-weight: 700; margin: 12px 0 6px; line-height: 1.35; }
+      .summary-card h3 { font-size: 15px; font-weight: 700; margin: 12px 0 6px; line-height: 1.32; }
+      .summary-card h4 { font-size: 14px; font-weight: 700; margin: 10px 0 6px; line-height: 1.3; }
+      .summary-card h5 { font-size: 13px; font-weight: 700; margin: 9px 0 4px; line-height: 1.28; }
+      .summary-card h6 { font-size: 12px; font-weight: 700; margin: 6px 0 4px; line-height: 1.26; }
       .summary-card ol {
         margin: 0 0 8px 16px;
         color: #111827;
-        font-size: 14px;
+        font-size: 12px;
         line-height: 1.5;
       }
-      .summary-card p {
-        margin: 6px 0;
+      .summary-card ul {
+        margin: 0 0 8px 16px;
         color: #111827;
-        font-size: 14px;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      .summary-card div {
+        color: #111827;
+        font-size: 12px;
         line-height: 1.6;
       }
       .cta-row {
@@ -563,7 +578,7 @@
               <button class="section-btn" title="다시 생성" data-section="summary" data-action="regen"><img src="../src/regenerate.png" alt="regenerate" width="12" height="12" /></button>
             </span>
           </h4>
-          <p id="summary-body" class="muted info-text"></p>
+          <div id="summary-body" class="muted info-text"></div>
         </div>
 
         <div class="summary-card">

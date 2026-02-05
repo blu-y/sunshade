@@ -92,10 +92,7 @@ async function sseToJson(response) {
     }
   }
 
-  if (filteredForLog.length) {
-    // Log only the final response.completed event for debugging
-    console.log("[codex] sse (completed):", filteredForLog.join("\n"));
-  }
+  // Logging removed per request
 
   // Prefer full final response if present
   if (final) {

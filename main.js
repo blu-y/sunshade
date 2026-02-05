@@ -85,7 +85,6 @@ ipcMain.handle('chat:openai:completion', async (_event, { messages, instructions
   const userMessage = Array.isArray(messages) ? messages.find((m) => m.role === 'user') : null;
   const question = userMessage?.content || messages?.[0]?.content || '';
   const result = await codexChatCompletion(token, accountId, question, instructions);
-  console.log('chat:openai:completion raw result:', result);
   return result;
 });
 ipcMain.handle('prompts:get', () => {

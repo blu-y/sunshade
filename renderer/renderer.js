@@ -661,6 +661,7 @@ async function generateSummaries() {
     if (summaryBody) {
       summaryBody.textContent = '생성 중...';
       summaryBody.classList.remove('placeholder');
+      summaryBody.classList.remove('info-text');
       const res = await window.sunshadeAPI.openaiChatCompletion(
         [
           { role: 'system', content: prompts.system || 'You are Sunshade.' },
@@ -669,7 +670,6 @@ async function generateSummaries() {
         prompts.sections?.summary
       );
       lastSummaryRaw = dedupeSummary(res.reply || '');
-      console.log('summary raw:', lastSummaryRaw);
       summaryBody.innerHTML = renderMarkdownToHtml(lastSummaryRaw || '생성 실패');
     }
   } catch (err) {
@@ -784,7 +784,6 @@ document.addEventListener('click', async (e) => {
           prompts.sections?.summary
         );
         lastSummaryRaw = dedupeSummary(res.reply || '');
-        console.log('summary raw (regen):', lastSummaryRaw);
         summaryBody.innerHTML = renderMarkdownToHtml(lastSummaryRaw || '생성 실패');
       }
       setAlert(null);
