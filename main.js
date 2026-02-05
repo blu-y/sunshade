@@ -3,11 +3,6 @@ const path = require('path');
 const fs = require('fs');
 
 const {
-  signInWithGoogle,
-  ensureGoogleConfig,
-  getValidAccessToken
-} = require('./src/auth/google');
-const {
   signInWithOpenAI,
   ensureOpenAIConfig,
   getValidOpenAIToken,
@@ -80,9 +75,6 @@ app.on('window-all-closed', () => {
   }
 });
 
-ipcMain.handle('auth:google:status', () => ensureGoogleConfig());
-ipcMain.handle('auth:google:login', () => signInWithGoogle());
-ipcMain.handle('auth:google:token', () => getValidAccessToken());
 ipcMain.handle('auth:openai:status', () => ensureOpenAIConfig());
 ipcMain.handle('auth:openai:login', () => signInWithOpenAI());
 ipcMain.handle('auth:openai:token', () => getValidOpenAIToken());
