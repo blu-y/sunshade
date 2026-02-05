@@ -26,6 +26,7 @@
         background: #f8fafc;
         color: #0f172a;
         height: 100vh;
+        overflow: hidden; /* Prevent body scroll */
       }
       .layout {
         display: grid;
@@ -54,7 +55,8 @@
         background: #f8fafc;
         border-right: 1px solid #e5e7eb;
         padding: 14px 10px 10px;
-        overflow: auto;
+        overflow-y: auto; /* Explicit vertical scroll */
+        height: 100vh; /* Fill height */
       }
       .side-nav button {
         border: 1px solid #e2e8f0;
@@ -87,6 +89,7 @@
         overflow-x: hidden;
         position: relative;
         padding: 12px 8px;
+        height: 100vh; /* Fill height */
       }
       .pdf-toolbar {
         display: flex;
@@ -198,7 +201,8 @@
         background: #f8fafc;
         border-left: 1px solid #e5e7eb;
         padding: 12px;
-        overflow: visible;
+        overflow-y: auto; /* Enable independent scrolling */
+        height: 100vh; /* Fill height */
         position: relative;
       }
       .summary-header {
@@ -498,6 +502,24 @@
         text-align: left;
       }
       .has-tooltip:hover::after {
+        opacity: 1;
+        transform: translateY(0);
+      }
+      .floating-toast {
+        position: fixed;
+        background: #334155;
+        color: #fff;
+        padding: 6px 10px;
+        border-radius: 6px;
+        font-size: 12px;
+        pointer-events: none;
+        opacity: 0;
+        transform: translateY(4px);
+        transition: opacity 0.2s, transform 0.2s;
+        z-index: 100;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+      }
+      .floating-toast.show {
         opacity: 1;
         transform: translateY(0);
       }

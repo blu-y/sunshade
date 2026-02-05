@@ -185,7 +185,7 @@ async function loadPdf(file) {
     updatePdfControls();
     updateSummaryPlaceholders(true);
     await generateSummaries();
-    logMessage(`Loaded PDF: ${file.name} (${pdfDoc.numPages} pages)`, 'info');
+    console.log(`Loaded PDF: ${file.name} (${pdfDoc.numPages} pages)`);
   } catch (err) {
     logMessage(`PDF load failed: ${err.message}`, 'error');
   }
@@ -544,29 +544,49 @@ function mergeEmojiSingles(lines) {
 
 function renderMarkdownToHtml(md) {
   if (!md) return '';
-  const html = marked.parse(md, { mangle: false, headerIds: false });
-  return renderMath(html);
+
+  // 1. Protect math expressions from marked parser
+  // Use a UUID-like token that won't be touched by markdown parser
+  // Avoid underscores which can be interpreted as italic/bold
+  const mathExprs = [];
+  const protectedMd = md.replace(/(\$\$[\s\S]+?\$\$|\$[^\$]+?\$)/g, (match) => {
+    mathExprs.push(match);
+    return `MathToken${mathExprs.length - 1}EndToken`;
+  });
+
+  // 2. Parse Markdown
+  let html = marked.parse(protectedMd, { mangle: false, headerIds: false });
+
+  // 3. Restore and render math
+  html = html.replace(/MathToken(\d+)EndToken/g, (_, index) => {
+    const expr = mathExprs[parseInt(index)];
+    if (!expr) return ''; // safety check
+    
+    // Strip delimiters for katex
+    if (expr.startsWith('$$')) {
+      const content = expr.slice(2, -2);
+      try {
+        return katex.renderToString(content, { throwOnError: false, displayMode: true });
+      } catch {
+        return expr;
+      }
+    } else {
+      const content = expr.slice(1, -1);
+      try {
+        return katex.renderToString(content, { throwOnError: false, displayMode: false });
+      } catch {
+        return expr;
+      }
+    }
+  });
+
+  return html;
 }
 
+// renderMath helper is no longer needed separately, but we can keep it for legacy calls or remove it.
+// For now, let's keep the function definition but it won't be used by renderMarkdownToHtml anymore.
 function renderMath(html) {
-  if (!html) return '';
-  // block math $$...$$
-  html = html.replace(/\$\$([\s\S]+?)\$\$/g, (_, expr) => {
-    try {
-      return katex.renderToString(expr, { throwOnError: false, displayMode: true });
-    } catch (e) {
-      return `$$${expr}$$`;
-    }
-  });
-  // inline math $...$
-  html = html.replace(/\$([^\$]+?)\$/g, (_, expr) => {
-    try {
-      return katex.renderToString(expr, { throwOnError: false, displayMode: false });
-    } catch (e) {
-      return `$${expr}$`;
-    }
-  });
-  return html;
+  return html; 
 }
 
 function tryParseKeywords(raw) {
@@ -796,6 +816,29 @@ async function extractPdfText(doc, maxPages = 6, maxChars = 12000) {
   }
 }
 
+function showToast(targetEl, message) {
+  const toast = document.createElement('div');
+  toast.className = 'floating-toast';
+  toast.textContent = message;
+  document.body.appendChild(toast);
+
+  const rect = targetEl.getBoundingClientRect();
+  toast.style.left = `${rect.left + rect.width / 2}px`;
+  toast.style.top = `${rect.bottom + 8}px`;
+  toast.style.transform = 'translate(-50%, 4px)';
+
+  // Trigger reflow
+  void toast.offsetWidth;
+  toast.classList.add('show');
+  toast.style.transform = 'translate(-50%, 0)';
+
+  setTimeout(() => {
+    toast.classList.remove('show');
+    toast.style.transform = 'translate(-50%, 4px)';
+    setTimeout(() => toast.remove(), 200);
+  }, 1500);
+}
+
 // Section action handlers (settings / copy / regenerate)
 document.addEventListener('click', async (e) => {
   const btn = e.target.closest('.section-btn');
@@ -805,7 +848,7 @@ document.addEventListener('click', async (e) => {
   if (!section || !action) return;
 
   if (action === 'settings') {
-    alert('프롬프트는 src/llm/prompts.json 파일에서 수정할 수 있습니다.');
+    window.sunshadeAPI.openSettings();
     return;
   }
 
@@ -815,24 +858,25 @@ document.addEventListener('click', async (e) => {
     if (section === 'brief') text = formatBriefForCopy();
     if (section === 'summary') text = lastSummaryRaw;
     if (!text) {
-      setAlert('복사할 내용이 없습니다. 먼저 PDF를 열어 생성하세요.', 'warn');
+      showToast(btn, 'Nothing to copy');
       return;
     }
     try {
       await navigator.clipboard.writeText(text);
-      setAlert('복사 완료', 'info');
+      showToast(btn, 'Copied!');
     } catch (err) {
-      setAlert(`클립보드 복사 실패: ${err.message}`, 'error');
+      showToast(btn, `Copy failed!: ${err.message}`);
     }
     return;
   }
 
   if (action === 'regen') {
     if (!lastExtractedText) {
-      setAlert('먼저 PDF를 로드하세요.', 'warn');
+      showToast(btn, 'Load PDF first');
       return;
     }
     try {
+      promptsCache = null; // Force reload prompts
       const prompts = await loadPrompts();
       if (section === 'keywords') {
         keywordsBody.textContent = '다시 생성 중...';

@@ -50,5 +50,8 @@ contextBridge.exposeInMainWorld('sunshadeAPI', {
     return cleanup;
   },
 
-  loadPrompts: () => ipcRenderer.invoke('prompts:get')
+  loadPrompts: () => ipcRenderer.invoke('prompts:getCombined'),
+  loadCustomPrompts: () => ipcRenderer.invoke('prompts:get'),
+  savePrompts: (data) => ipcRenderer.invoke('prompts:save', data),
+  openSettings: () => ipcRenderer.send('window:settings:open')
 });

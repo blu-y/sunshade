@@ -110,13 +110,80 @@ ipcMain.on('chat:openai:stream:start', async (event, { messages, instructions, s
   }
 });
 
+// Load custom prompts for settings UI
 ipcMain.handle('prompts:get', () => {
   try {
-    const p = path.join(__dirname, 'src', 'llm', 'prompts.json');
+    const p = path.join(__dirname, 'src', 'llm', 'custom_prompts.json');
+    if (!fs.existsSync(p)) return {};
     const raw = fs.readFileSync(p, 'utf-8');
     return JSON.parse(raw);
   } catch (err) {
-    console.error('Failed to load prompts.json', err);
+    console.error('Failed to load custom_prompts.json', err);
     return {};
   }
+});
+
+// Save custom prompts
+ipcMain.handle('prompts:save', (_event, data) => {
+  try {
+    const p = path.join(__dirname, 'src', 'llm', 'custom_prompts.json');
+    fs.writeFileSync(p, JSON.stringify(data, null, 2), 'utf-8');
+    return true;
+  } catch (err) {
+    console.error('Failed to save custom_prompts.json', err);
+    throw err;
+  }
+});
+
+// Load combined prompts for actual generation
+ipcMain.handle('prompts:getCombined', () => {
+  try {
+    const baseP = path.join(__dirname, 'src', 'llm', 'prompts.json');
+    const customP = path.join(__dirname, 'src', 'llm', 'custom_prompts.json');
+    
+    const base = JSON.parse(fs.readFileSync(baseP, 'utf-8'));
+    let custom = {};
+    if (fs.existsSync(customP)) {
+      custom = JSON.parse(fs.readFileSync(customP, 'utf-8'));
+    }
+
+    const combine = (b, c) => {
+      if (!c) return b;
+      return b + '\n\n' + c;
+    };
+
+    return {
+      system: combine(base.system, custom.system),
+      sections: {
+        keywords: combine(base.sections?.keywords, custom.sections?.keywords),
+        brief: combine(base.sections?.brief, custom.sections?.brief),
+        summary: combine(base.sections?.summary, custom.sections?.summary)
+      }
+    };
+  } catch (err) {
+    console.error('Failed to load combined prompts', err);
+    // Fallback to base or empty
+    return {};
+  }
+});
+
+let settingsWin = null;
+ipcMain.on('window:settings:open', () => {
+  if (settingsWin) {
+    settingsWin.focus();
+    return;
+  }
+  settingsWin = new BrowserWindow({
+    width: 600,
+    height: 800,
+    title: 'Settings',
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js')
+    }
+  });
+  settingsWin.loadFile(path.join(__dirname, 'renderer', 'settings.html'));
+  settingsWin.on('closed', () => {
+    settingsWin = null;
+  });
 });
