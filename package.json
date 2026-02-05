@@ -1,0 +1,15 @@
+{
+  "name": "sunshade",
+  "version": "0.1.0",
+  "description": "Sunshade: desktop AI paper analysis tool (Electron skeleton)",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "dependencies": {
+    "electron": "^35.7.5",
+    "google-auth-library": "^9.4.2",
+    "keytar": "^7.9.0",
+    "pdfjs-dist": "^4.8.69"
+  }
+}

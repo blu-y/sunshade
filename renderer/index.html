@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self'; connect-src 'self' https://auth.openai.com https://chatgpt.com https://chat.openai.com https://api.openai.com;" />
+    <title>Sunshade</title>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../node_modules/pdfjs-dist/web/pdf_viewer.css" />
+    <style>
+      * { box-sizing: border-box; }
+      :root {
+        --col-left: 280px;
+        --col-right: 420px;
+        --gutter: 8px;
+      }
+      body {
+        margin: 0;
+        font-family: 'Inter', system-ui, -apple-system, sans-serif;
+        background: #f8fafc;
+        color: #0f172a;
+        height: 100vh;
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: var(--col-left) 6px 1fr 6px var(--col-right);
+        height: 100vh;
+        background: #f8fafc;
+      }
+      .col-resizer {
+        cursor: col-resize;
+        position: relative;
+        background: #f8fafc;
+      }
+      .col-resizer::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: 50%;
+        width: 1px;
+        transform: translateX(-0.5px);
+        background: #cbd5e1;
+        pointer-events: none;
+      }
+      .panel-header { display: none; }
+      .side-nav {
+        background: #f8fafc;
+        border-right: 1px solid #e5e7eb;
+        padding: 14px 10px 10px;
+        overflow: auto;
+      }
+      .side-nav button {
+        border: 1px solid #e2e8f0;
+        background: #fff;
+        border-radius: 8px;
+        padding: 10px 12px;
+        width: 100%;
+        font-weight: 600;
+        color: #0f172a;
+        cursor: pointer;
+      }
+      .side-nav ul {
+        list-style: none;
+        padding: 0;
+        margin: 16px 0 0;
+      }
+      .side-nav li {
+        padding: 8px 6px;
+        font-size: 14px;
+        color: #1f2937;
+      }
+      .side-nav li.active {
+        background: #e0e7ff;
+        border-radius: 6px;
+        font-weight: 600;
+      }
+      .pdf-pane {
+        background: #f8fafc;
+        overflow-y: auto;
+        overflow-x: hidden;
+        position: relative;
+        padding: 12px 8px;
+      }
+      .pdf-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        background: #fff;
+        border: 1px solid #e5e7eb;
+        border-radius: 10px;
+        padding: 6px 10px;
+        margin-bottom: 10px;
+        position: sticky;
+        top: 0;
+        z-index: 2;
+      }
+      .pdf-toolbar button {
+        border: 1px solid #e2e8f0;
+        background: #f8fafc;
+        border-radius: 8px;
+        padding: 6px 10px;
+        min-width: 34px;
+        height: 32px;
+        font-weight: 600;
+        color: #0f172a;
+        cursor: pointer;
+      }
+      .pdf-toolbar button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      .pdf-toolbar .spacer { flex: 1; }
+      #pdf-page-display {
+        padding: 0 10px;
+        font-weight: 600;
+        color: #111827;
+        min-width: 70px;
+        text-align: center;
+      }
+      .pdf-doc {
+        background: #fff;
+        border: 1px solid #e5e7eb;
+        border-radius: 6px;
+        box-shadow: 0 10px 30px rgba(15, 23, 42, 0.1);
+        width: 100%;
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 8px 8px 12px;
+        position: relative;
+        min-height: 120px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      #pdf-pages {
+        display: none;
+      }
+      .pdf-page-canvas {
+        width: 100%;
+        border: 1px solid #e5e7eb;
+        border-radius: 6px;
+        margin-bottom: 12px;
+        background: #fff;
+        box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+      }
+      .pdf-page {
+        position: relative;
+      }
+      .text-layer {
+        position: absolute;
+        left: 0;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        color: transparent;
+        mix-blend-mode: normal;
+        pointer-events: none;
+      }
+      .text-layer span {
+        position: absolute;
+        white-space: pre;
+        transform-origin: 0% 0%;
+        pointer-events: all; /* allow selection */
+        color: transparent;
+        text-shadow: 0 0 0 #111827; /* make selectable text visible */
+      }
+      .pdf-empty {
+        flex: 1;
+        min-height: 160px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px dashed #cbd5e1;
+        border-radius: 8px;
+        color: #4b5563;
+        background: rgba(255, 255, 255, 0.6);
+        font-weight: 500;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .pdf-footer {
+        color: #111827;
+        font-size: 12px;
+        font-weight: 500;
+        border-top: 1px solid #e5e7eb;
+        padding-top: 4px;
+        text-align: center;
+        display: none;
+      }
+      .summary-pane {
+        background: #f8fafc;
+        border-left: 1px solid #e5e7eb;
+        padding: 12px;
+        overflow: auto;
+      }
+      .summary-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        background: #e5e7eb;
+        border: 1px solid #d1d5db;
+        border-radius: 10px;
+        padding: 8px 10px;
+        margin-bottom: 12px;
+      }
+      .summary-card {
+        background: #fff;
+        border: 1px solid #e5e7eb;
+        border-radius: 10px;
+        padding: 12px;
+        margin-bottom: 12px;
+      }
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .chip {
+        background: #eef2ff;
+        color: #4338ca;
+        border-radius: 999px;
+        padding: 6px 10px;
+        font-size: 12px;
+        border: 1px solid #e0e7ff;
+      }
+      .summary-card h4 {
+        margin: 0 0 10px;
+        font-size: 15px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .summary-card ol {
+        margin: 0 0 8px 16px;
+        color: #111827;
+        font-size: 14px;
+        line-height: 1.5;
+      }
+      .summary-card p {
+        margin: 6px 0;
+        color: #111827;
+        font-size: 14px;
+        line-height: 1.6;
+      }
+      .cta-row {
+        display: flex;
+        gap: 10px;
+        margin-top: 6px;
+      }
+      .cta {
+        flex: 1;
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid #e5e7eb;
+        background: #fff;
+        font-weight: 600;
+        color: #0f172a;
+        text-align: center;
+      }
+      .ask-row {
+        display: flex;
+        gap: 8px;
+      }
+      .ask-row input {
+        flex: 1;
+        border: 1px solid #e5e7eb;
+        border-radius: 10px;
+        padding: 12px;
+        font-size: 14px;
+      }
+      .ask-row button {
+        width: 120px;
+        border: 1px solid #dbeafe;
+        border-radius: 10px;
+        background: #2563eb;
+        color: #fff;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      .openai-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 10px;
+        background: #eef2ff;
+        border: 1px solid #cbd5e1;
+        border-radius: 12px;
+        font-size: 12px;
+        color: #1f2937;
+        cursor: pointer;
+        transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+      }
+      .openai-chip .status-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        background: #22c55e;
+        box-shadow: 0 0 0 2px rgba(34,197,94,0.15);
+      }
+      .openai-chip:hover {
+        background: #e0e7ff;
+        border-color: #a5b4fc;
+        box-shadow: 0 6px 14px rgba(59, 130, 246, 0.18);
+      }
+      .alert-pill {
+        display: none;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 10px;
+        border-radius: 12px;
+        background: #eef2ff;
+        border: 1px solid #cbd5e1;
+        color: #1f2937;
+        font-size: 12px;
+        cursor: default;
+      }
+      .alert-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        background: #22c55e;
+        box-shadow: 0 0 0 2px rgba(34,197,94,0.15);
+      }
+      .alert-pill.warn .alert-dot {
+        background: #f59e0b;
+        box-shadow: 0 0 0 2px rgba(245,158,11,0.15);
+      }
+      .alert-pill.error .alert-dot {
+        background: #ef4444;
+        box-shadow: 0 0 0 2px rgba(239,68,68,0.15);
+      }
+      .has-tooltip { position: relative; }
+      .has-tooltip::after {
+        content: attr(data-tooltip);
+        position: absolute;
+        bottom: -38px;
+        right: 0;
+        background: #0f172a;
+        color: #fff;
+        padding: 6px 8px;
+        border-radius: 8px;
+        font-size: 11px;
+        white-space: nowrap;
+        opacity: 0;
+        transform: translateY(-4px);
+        pointer-events: none;
+        box-shadow: 0 10px 24px rgba(0,0,0,0.25);
+        transition: opacity 0.12s ease, transform 0.12s ease;
+        z-index: 5;
+      }
+      .has-tooltip:hover::after {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="layout" id="layout">
+      <aside class="side-nav">
+        <button>빠른 분석</button>
+        <ul>
+          <li class="active">Index Panel</li>
+          <li>즐겨찾기</li>
+          <li>히스토리</li>
+        </ul>
+      </aside>
+
+      <div class="col-resizer" id="resizer-left"></div>
+
+      <section class="pdf-pane">
+        <div class="pdf-toolbar">
+          <button id="pdf-prev">◀</button>
+          <span id="pdf-page-display">- / -</span>
+          <button id="pdf-next">▶</button>
+          <div class="spacer"></div>
+          <button id="pdf-zoom-out">-</button>
+          <button id="pdf-zoom-in">+</button>
+          <button id="pdf-fit">맞춤</button>
+          <input type="file" id="pdf-file-input" accept="application/pdf" style="display:none" />
+        </div>
+        <article class="pdf-doc">
+          <div class="pdf-empty" id="pdf-empty">파일을 선택하면 페이지가 표시됩니다.</div>
+          <div id="pdf-pages"></div>
+          <div class="pdf-footer" id="pdf-footer"> </div>
+        </article>
+      </section>
+
+      <div class="col-resizer" id="resizer-right"></div>
+
+      <section class="summary-pane">
+        <div style="display:flex; align-items:center; justify-content:flex-end; gap:8px; margin-bottom:12px;">
+          <div class="alert-pill" id="alert-pill"><span class="alert-dot"></span><span id="alert-text">OK</span></div>
+          <div class="openai-chip" id="openai-chip">
+            <span class="status-dot" id="openai-dot"></span>
+            <span id="openai-chip-text">Checking</span>
+          </div>
+        </div>
+
+        <div class="summary-card">
+          <h4>카테고리 사전</h4>
+          <div class="chips">
+            <span class="chip">Depth Anything 3 (DA3)</span>
+            <span class="chip">Visual Geometry Benchmark</span>
+            <span class="chip">Teacher-Student</span>
+            <span class="chip">Plane Transformer</span>
+            <span class="chip">Dual-Depth Representation</span>
+          </div>
+        </div>
+
+        <div class="summary-card">
+          <h4>3줄 요약</h4>
+          <ol>
+            <li>Depth Anything 3(DA3)는 피쳐링 없는 입력만으로도 일관된 depth-map을 생성.</li>
+            <li>단일 및 멀티뷰 transformer 구조와 cross-view self-attention으로 성능 향상.</li>
+            <li>장시간 영상에서 SOTA를 달성하며 monocular depth estimation 대비 2D/3D 지표가 향상.</li>
+          </ol>
+        </div>
+
+        <div class="summary-card">
+          <h4>요약</h4>
+          <p>
+            “Depth Anything 3: Recovering the Visual Space from Any Views” 논문은 다양한 이미지, 다중 뷰 입력을 통해 시공간적으로 일관된 3D 기하를 추정하는 모델을 제안한다. DA3는 cross-view attention과 dual-depth head로 구조를 구성하며...
+          </p>
+        </div>
+
+        <div class="summary-card">
+          <h4>핵심 방법론</h4>
+          <p>
+            DA3는 3D 기하적 구조를 reconstruct하는 dense prediction 작업으로 접근한다. 두 depth head를 통해 입력 뷰 별 예측을 정합하고...
+          </p>
+          <div class="chips" style="margin-top:8px;">
+            <span class="chip">근거 보기</span>
+            <span class="chip">장점</span>
+            <span class="chip">한계</span>
+            <span class="chip">적용</span>
+          </div>
+        </div>
+
+        <div class="summary-card">
+          <div class="ask-row">
+            <input id="ask-input" placeholder="무엇이든 질문하세요." />
+            <button id="ask-btn">질문</button>
+          </div>
+          <div class="cta-row" style="margin-top:10px;">
+            <div class="cta">Add Reference</div>
+            <div class="cta">Gemini 2.5 Flash Live</div>
+          </div>
+        </div>
+
+      </section>
+    </div>
+    <script type="module" src="./renderer.js"></script>
+  </body>
+</html>

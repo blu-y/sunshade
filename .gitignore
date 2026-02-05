@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+out/
+build/
+release/
+
+# Caches and coverage
+.parcel-cache/
+.webpack/
+coverage/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Env/config secrets
+.env
+.env.*
+
+# OS/Editor noise
+.DS_Store
+.idea/
+.vscode/
+
+# Electron packaging artifacts
+*.asar
