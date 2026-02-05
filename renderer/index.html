@@ -9,6 +9,7 @@
       rel="stylesheet"
     />
     <link rel="stylesheet" href="../node_modules/pdfjs-dist/web/pdf_viewer.css" />
+    <link rel="stylesheet" href="../node_modules/katex/dist/katex.min.css" />
     <style>
       * { box-sizing: border-box; }
       :root {
@@ -194,7 +195,8 @@
         background: #f8fafc;
         border-left: 1px solid #e5e7eb;
         padding: 12px;
-        overflow: auto;
+        overflow: visible;
+        position: relative;
       }
       .summary-header {
         display: flex;
@@ -281,6 +283,128 @@
         font-weight: 700;
         cursor: pointer;
       }
+      .ask-output {
+        margin-top: 10px;
+        padding: 12px;
+        border: 1px solid #e5e7eb;
+        border-radius: 10px;
+        background: #f8fafc;
+        color: #111827;
+        white-space: pre-wrap;
+        line-height: 1.5;
+      }
+      .ask-output .label {
+        display: block;
+        font-weight: 700;
+        margin-bottom: 6px;
+        color: #1f2937;
+      }
+      .ask-output.muted {
+        color: #6b7280;
+        border-style: dashed;
+        background: #fff;
+      }
+      #brief-list {
+        list-style: none;
+        padding-left: 0;
+        margin: 0;
+      }
+      .info-text {
+        color: #4b5563;
+        font-size: 12px;
+        font-weight: 500;
+        line-height: 1.5;
+      }
+      .summary-card .info-text li {
+        color: #4b5563;
+        font-size: 12px;
+        font-weight: 500;
+        line-height: 1.5;
+        margin: 0;
+        padding: 0;
+      }
+      .summary-card p.info-text {
+        color: #4b5563;
+        font-size: 12px;
+        font-weight: 500;
+        line-height: 1.5;
+        margin: 0;
+      }
+      .summary-card .info-text.placeholder {
+        text-align: center;
+        display: block;
+      }
+      .section-actions {
+        display: inline-flex;
+        gap: 6px;
+        margin-left: 8px;
+      }
+      .section-btn {
+        width: 26px;
+        height: 26px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 8px;
+        border: 1px solid #e2e8f0;
+        background: #fff;
+        cursor: pointer;
+        color: #0f172a;
+        font-size: 13px;
+        transition: all 0.12s ease;
+        padding: 4px;
+      }
+      .section-btn:hover {
+        background: #e0f2fe;
+        border-color: #bae6fd;
+      }
+      .section-btn:active {
+        transform: translateY(1px);
+      }
+      .keyword-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 10px;
+        margin: 4px 6px 0 0;
+        border-radius: 10px;
+        border: 1px solid #dbeafe;
+        background: #eef2ff;
+        color: #111827;
+        font-size: 12px;
+        line-height: 1.4;
+        cursor: default;
+        position: relative;
+      }
+      .keyword-chip::after {
+        content: attr(data-desc);
+        position: absolute;
+        left: 50%;
+        top: 110%;
+        transform: translateX(-50%) translateY(4px);
+        background: #0f172a;
+        color: #f8fafc;
+        padding: 10px 12px;
+        border-radius: 12px;
+        font-size: 11px;
+        line-height: 1.5;
+        min-width: 320px;
+        max-width: 520px;
+        max-height: 260px;
+        overflow: auto;
+        white-space: normal;
+        box-shadow: 0 18px 36px rgba(0,0,0,0.32);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.14s ease, transform 0.14s ease;
+        z-index: 6;
+      }
+      .keyword-chip:hover::after,
+      .keyword-chip:focus-visible::after,
+      .keyword-chip.active::after {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+      }
       .openai-chip {
         display: inline-flex;
         align-items: center;
@@ -310,13 +434,15 @@
         display: none;
         align-items: center;
         gap: 6px;
-        padding: 6px 10px;
-        border-radius: 12px;
-        background: #eef2ff;
-        border: 1px solid #cbd5e1;
-        color: #1f2937;
+        padding: 8px 12px;
+        border-radius: 14px;
+        background: linear-gradient(135deg, rgba(238, 242, 255, 0.9), rgba(226, 232, 240, 0.9));
+        border: 1px solid rgba(148, 163, 184, 0.45);
+        box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12);
+        color: #0f172a;
         font-size: 12px;
         cursor: default;
+        backdrop-filter: blur(6px);
       }
       .alert-dot {
         width: 10px;
@@ -337,20 +463,24 @@
       .has-tooltip::after {
         content: attr(data-tooltip);
         position: absolute;
-        bottom: -38px;
+        top: calc(100% + 10px);
         right: 0;
         background: #0f172a;
-        color: #fff;
-        padding: 6px 8px;
-        border-radius: 8px;
+        color: #f8fafc;
+        padding: 8px 10px;
+        border-radius: 10px;
         font-size: 11px;
-        white-space: nowrap;
+        line-height: 1.5;
+        max-width: 240px;
+        min-width: 140px;
+        white-space: normal;
         opacity: 0;
-        transform: translateY(-4px);
+        transform: translateY(6px);
         pointer-events: none;
-        box-shadow: 0 10px 24px rgba(0,0,0,0.25);
-        transition: opacity 0.12s ease, transform 0.12s ease;
-        z-index: 5;
+        box-shadow: 0 14px 32px rgba(0, 0, 0, 0.28);
+        transition: opacity 0.14s ease, transform 0.14s ease;
+        z-index: 6;
+        text-align: left;
       }
       .has-tooltip:hover::after {
         opacity: 1;
@@ -400,44 +530,40 @@
           </div>
         </div>
 
-        <div class="summary-card">
-          <h4>카테고리 사전</h4>
-          <div class="chips">
-            <span class="chip">Depth Anything 3 (DA3)</span>
-            <span class="chip">Visual Geometry Benchmark</span>
-            <span class="chip">Teacher-Student</span>
-            <span class="chip">Plane Transformer</span>
-            <span class="chip">Dual-Depth Representation</span>
-          </div>
+        <div class="summary-card" id="card-keywords">
+          <h4>
+            키워드
+            <span class="section-actions">
+              <button class="section-btn" title="프롬프트 위치: src/llm/prompts.json" data-section="keywords" data-action="settings"><img src="../src/settings.png" alt="settings" width="13" height="13" /></button>
+              <button class="section-btn" title="복사" data-section="keywords" data-action="copy"><img src="../src/copy.png" alt="copy" width="12" height="12" /></button>
+              <button class="section-btn" title="다시 생성" data-section="keywords" data-action="regen"><img src="../src/regenerate.png" alt="regenerate" width="12" height="12" /></button>
+            </span>
+          </h4>
+          <div id="keywords-body" class="muted info-text"></div>
         </div>
 
-        <div class="summary-card">
-          <h4>3줄 요약</h4>
-          <ol>
-            <li>Depth Anything 3(DA3)는 피쳐링 없는 입력만으로도 일관된 depth-map을 생성.</li>
-            <li>단일 및 멀티뷰 transformer 구조와 cross-view self-attention으로 성능 향상.</li>
-            <li>장시간 영상에서 SOTA를 달성하며 monocular depth estimation 대비 2D/3D 지표가 향상.</li>
-          </ol>
+        <div class="summary-card" id="card-brief">
+          <h4>
+            3줄 요약
+            <span class="section-actions">
+              <button class="section-btn" title="프롬프트 위치: src/llm/prompts.json" data-section="brief" data-action="settings"><img src="../src/settings.png" alt="settings" width="13" height="13" /></button>
+              <button class="section-btn" title="복사" data-section="brief" data-action="copy"><img src="../src/copy.png" alt="copy" width="12" height="12" /></button>
+              <button class="section-btn" title="다시 생성" data-section="brief" data-action="regen"><img src="../src/regenerate.png" alt="regenerate" width="12" height="12" /></button>
+            </span>
+          </h4>
+          <ol id="brief-list" class="muted info-text"></ol>
         </div>
 
-        <div class="summary-card">
-          <h4>요약</h4>
-          <p>
-            “Depth Anything 3: Recovering the Visual Space from Any Views” 논문은 다양한 이미지, 다중 뷰 입력을 통해 시공간적으로 일관된 3D 기하를 추정하는 모델을 제안한다. DA3는 cross-view attention과 dual-depth head로 구조를 구성하며...
-          </p>
-        </div>
-
-        <div class="summary-card">
-          <h4>핵심 방법론</h4>
-          <p>
-            DA3는 3D 기하적 구조를 reconstruct하는 dense prediction 작업으로 접근한다. 두 depth head를 통해 입력 뷰 별 예측을 정합하고...
-          </p>
-          <div class="chips" style="margin-top:8px;">
-            <span class="chip">근거 보기</span>
-            <span class="chip">장점</span>
-            <span class="chip">한계</span>
-            <span class="chip">적용</span>
-          </div>
+        <div class="summary-card" id="card-summary">
+          <h4>
+            요약
+            <span class="section-actions">
+              <button class="section-btn" title="프롬프트 위치: src/llm/prompts.json" data-section="summary" data-action="settings"><img src="../src/settings.png" alt="settings" width="13" height="13" /></button>
+              <button class="section-btn" title="복사" data-section="summary" data-action="copy"><img src="../src/copy.png" alt="copy" width="12" height="12" /></button>
+              <button class="section-btn" title="다시 생성" data-section="summary" data-action="regen"><img src="../src/regenerate.png" alt="regenerate" width="12" height="12" /></button>
+            </span>
+          </h4>
+          <p id="summary-body" class="muted info-text"></p>
         </div>
 
         <div class="summary-card">
@@ -445,6 +571,7 @@
             <input id="ask-input" placeholder="무엇이든 질문하세요." />
             <button id="ask-btn">질문</button>
           </div>
+          <div id="ask-output" class="ask-output muted">아직 질문이 없습니다.</div>
           <div class="cta-row" style="margin-top:10px;">
             <div class="cta">Add Reference</div>
             <div class="cta">Gemini 2.5 Flash Live</div>

@@ -8,6 +8,7 @@ const {
   getValidOpenAIToken,
   logoutOpenAI
 } = require('./src/auth/openai');
+const { codexChatCompletion } = require('./src/llm/codex-chat');
 
 function loadWindowState() {
   try {
@@ -79,3 +80,21 @@ ipcMain.handle('auth:openai:status', () => ensureOpenAIConfig());
 ipcMain.handle('auth:openai:login', () => signInWithOpenAI());
 ipcMain.handle('auth:openai:token', () => getValidOpenAIToken());
 ipcMain.handle('auth:openai:logout', () => logoutOpenAI());
+ipcMain.handle('chat:openai:completion', async (_event, { messages, instructions }) => {
+  const { token, accountId } = await getValidOpenAIToken();
+  const userMessage = Array.isArray(messages) ? messages.find((m) => m.role === 'user') : null;
+  const question = userMessage?.content || messages?.[0]?.content || '';
+  const result = await codexChatCompletion(token, accountId, question, instructions);
+  console.log('chat:openai:completion raw result:', result);
+  return result;
+});
+ipcMain.handle('prompts:get', () => {
+  try {
+    const p = path.join(__dirname, 'src', 'llm', 'prompts.json');
+    const raw = fs.readFileSync(p, 'utf-8');
+    return JSON.parse(raw);
+  } catch (err) {
+    console.error('Failed to load prompts.json', err);
+    return {};
+  }
+});

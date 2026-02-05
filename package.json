@@ -8,6 +8,8 @@
   },
   "dependencies": {
     "electron": "^35.7.5",
+    "katex": "^0.16.9",
+    "marked": "^11.1.1",
     "keytar": "^7.9.0",
     "pdfjs-dist": "^4.8.69"
   }
