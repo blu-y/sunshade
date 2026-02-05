@@ -325,13 +325,29 @@ async function runChat(question) {
   if (!askBtn) return;
   askBtn.disabled = true;
   const prevLabel = askBtn.textContent;
-  askBtn.textContent = '생성 중...';
+  askBtn.textContent = '...';
   setAlert('응답 생성 중...', 'info');
+
+  renderAnswer(question, ''); // Init empty answer container
+  const answerBody = askOutput.lastElementChild; // The div where answer goes
+  let accumulated = '';
+
   try {
-    const res = await window.sunshadeAPI.openaiChatCompletion([
-      { role: 'user', content: question }
-    ]);
-    renderAnswer(question, res.reply);
+    // Stream Chat
+    await new Promise((resolve, reject) => {
+      window.sunshadeAPI.openaiStream(
+        [{ role: 'user', content: question }],
+        undefined, // default instructions
+        {
+          onChunk: (chunk) => {
+            accumulated += chunk;
+            answerBody.textContent = accumulated;
+          },
+          onDone: () => resolve(),
+          onError: (err) => reject(err)
+        }
+      );
+    });
     setAlert(null);
   } catch (err) {
     const msg = err?.message || '알 수 없는 오류';
@@ -351,6 +367,8 @@ async function runChat(question) {
 function renderAnswer(question, answer) {
   if (!askOutput) return;
   askOutput.classList.remove('muted');
+  // If we are starting a new chat, clear previous or append?
+  // Current logic replaces content.
   askOutput.innerHTML = '';
   const label = document.createElement('span');
   label.className = 'label';
@@ -360,7 +378,7 @@ function renderAnswer(question, answer) {
   qEl.style.marginBottom = '6px';
   qEl.textContent = `Q: ${question}`;
   const aEl = document.createElement('div');
-  aEl.textContent = answer;
+  aEl.textContent = answer; // will be updated via stream
   askOutput.appendChild(label);
   askOutput.appendChild(qEl);
   askOutput.appendChild(aEl);
@@ -435,7 +453,10 @@ function renderKeywords(reply) {
     // ignore
   }
   if (!keywordsBody.children.length) {
-    keywordsBody.textContent = '생성 실패';
+    // If parsing failed but we have raw text (streaming intermediate), show raw text?
+    // For keywords, raw JSON is ugly. We might show "Generating..." until done.
+    if (!reply) keywordsBody.textContent = '생성 실패';
+    else keywordsBody.textContent = '...'; 
   }
 }
 
@@ -606,6 +627,24 @@ document.addEventListener('click', (e) => {
   if (!alreadyActive) chip.classList.add('active');
 });
 
+// Generic stream helper
+function runStreamTask(messages, instruction, onChunk, onDone) {
+  return new Promise((resolve, reject) => {
+    window.sunshadeAPI.openaiStream(
+      messages,
+      instruction,
+      {
+        onChunk,
+        onDone: () => {
+          if (onDone) onDone();
+          resolve();
+        },
+        onError: reject
+      }
+    );
+  });
+}
+
 async function generateSummaries() {
   if (!pdfDoc) return;
   try {
@@ -618,59 +657,109 @@ async function generateSummaries() {
     if (keywordsBody) {
       keywordsBody.textContent = '생성 중...';
       keywordsBody.classList.remove('placeholder');
-      const res = await window.sunshadeAPI.openaiChatCompletion(
+      
+      let rawAcc = '';
+      runStreamTask(
         [
           { role: 'system', content: prompts.system || 'You are Sunshade.' },
           { role: 'user', content: `${prompts.sections?.keywords || 'Extract keywords.'}\n\n${text}` }
         ],
-        prompts.sections?.keywords
-      );
-      lastKeywordsRaw = res.reply || '';
-      renderKeywords(lastKeywordsRaw);
+        prompts.sections?.keywords,
+        (chunk) => {
+          rawAcc += chunk;
+          // For JSON, we can't parse partial easily, so we just wait or show raw?
+          // Let's show raw text if it looks like English/Korean, but JSON usually starts with [
+          // If we want real-time feedback, maybe just dots?
+          // keywordsBody.textContent = '생성 중' + '.'.repeat(rawAcc.length % 4);
+        },
+        () => {
+          lastKeywordsRaw = rawAcc;
+          renderKeywords(lastKeywordsRaw);
+        }
+      ).catch(err => {
+         keywordsBody.textContent = '오류 발생';
+         console.error(err);
+      });
     }
 
   // 3줄 요약
   if (briefList) {
     briefList.innerHTML = '<li>생성 중...</li>';
     briefList.classList.remove('placeholder');
-    const res = await window.sunshadeAPI.openaiChatCompletion(
+    
+    let rawAcc = '';
+    runStreamTask(
       [
         { role: 'system', content: prompts.system || 'You are Sunshade.' },
         { role: 'user', content: `${prompts.sections?.brief || 'Give 3 bullet sentences.'}\n\n${text}` }
       ],
-      prompts.sections?.brief
-    );
-    lastBriefRaw = res.reply || '';
-    const lines = parseBriefLines(lastBriefRaw).slice(0, 3);
-    lastBriefLines = lines;
-    briefList.innerHTML = '';
-      if (lines.length === 0) {
-        const li = document.createElement('li');
-        li.textContent = '생성 실패';
-        briefList.appendChild(li);
-      } else {
-        lines.forEach((line) => {
+      prompts.sections?.brief,
+      (chunk) => {
+        rawAcc += chunk;
+        // Try parsing lines on the fly?
+        const lines = parseBriefLines(rawAcc).slice(0, 3);
+        if (lines.length > 0) {
+           briefList.innerHTML = '';
+           lines.forEach(line => {
+             const li = document.createElement('li');
+             li.textContent = normalizeLine(line.replace(/^\d+[\).\s-]*/, ''));
+             briefList.appendChild(li);
+           });
+        }
+      },
+      () => {
+        lastBriefRaw = rawAcc;
+        // Final polish
+        const lines = parseBriefLines(lastBriefRaw).slice(0, 3);
+        lastBriefLines = lines;
+        briefList.innerHTML = '';
+        if (lines.length === 0) {
           const li = document.createElement('li');
-          li.textContent = normalizeLine(line.replace(/^\d+[\).\s-]*/, ''));
+          li.textContent = '생성 실패';
           briefList.appendChild(li);
-        });
+        } else {
+          lines.forEach((line) => {
+            const li = document.createElement('li');
+            li.textContent = normalizeLine(line.replace(/^\d+[\).\s-]*/, ''));
+            briefList.appendChild(li);
+          });
+        }
       }
-    }
+    ).catch(err => console.error(err));
+  }
 
     // 요약
     if (summaryBody) {
       summaryBody.textContent = '생성 중...';
       summaryBody.classList.remove('placeholder');
       summaryBody.classList.remove('info-text');
-      const res = await window.sunshadeAPI.openaiChatCompletion(
+      
+      let rawAcc = '';
+      let isFirst = true;
+      runStreamTask(
         [
           { role: 'system', content: prompts.system || 'You are Sunshade.' },
           { role: 'user', content: `${prompts.sections?.summary || 'Summarize.'}\n\n${text}` }
         ],
-        prompts.sections?.summary
-      );
-      lastSummaryRaw = dedupeSummary(res.reply || '');
-      summaryBody.innerHTML = renderMarkdownToHtml(lastSummaryRaw || '생성 실패');
+        prompts.sections?.summary,
+        (chunk) => {
+          if (isFirst) {
+            summaryBody.innerHTML = '';
+            isFirst = false;
+          }
+          rawAcc += chunk;
+          // Render markdown incrementally
+          // Note: incomplete markdown might look broken, but better than waiting
+          summaryBody.innerHTML = renderMarkdownToHtml(rawAcc);
+        },
+        () => {
+          lastSummaryRaw = dedupeSummary(rawAcc);
+          summaryBody.innerHTML = renderMarkdownToHtml(lastSummaryRaw || '생성 실패');
+        }
+      ).catch(err => {
+         summaryBody.textContent = '오류 발생';
+         console.error(err);
+      });
     }
   } catch (err) {
     console.error('generateSummaries error', err);
@@ -747,44 +836,66 @@ document.addEventListener('click', async (e) => {
       const prompts = await loadPrompts();
       if (section === 'keywords') {
         keywordsBody.textContent = '다시 생성 중...';
-        const res = await window.sunshadeAPI.openaiChatCompletion(
+        let rawAcc = '';
+        runStreamTask(
           [
             { role: 'system', content: prompts.system || 'You are Sunshade.' },
             { role: 'user', content: `${prompts.sections?.keywords || 'Extract keywords.'}\n\n${lastExtractedText}` }
           ],
-          prompts.sections?.keywords
+          prompts.sections?.keywords,
+          (chunk) => { rawAcc += chunk; },
+          () => {
+            lastKeywordsRaw = rawAcc;
+            renderKeywords(lastKeywordsRaw);
+          }
         );
-        lastKeywordsRaw = res.reply || '';
-        renderKeywords(lastKeywordsRaw);
       } else if (section === 'brief') {
         briefList.innerHTML = '<li>다시 생성 중...</li>';
-        const res = await window.sunshadeAPI.openaiChatCompletion(
+        let rawAcc = '';
+        runStreamTask(
           [
             { role: 'system', content: prompts.system || 'You are Sunshade.' },
             { role: 'user', content: `${prompts.sections?.brief || 'Give 3 bullet sentences.'}\n\n${lastExtractedText}` }
           ],
-          prompts.sections?.brief
+          prompts.sections?.brief,
+          (chunk) => {
+             rawAcc += chunk;
+             const lines = parseBriefLines(rawAcc).slice(0, 3);
+             if (lines.length > 0) {
+               briefList.innerHTML = '';
+               lines.forEach(line => {
+                 const li = document.createElement('li');
+                 li.textContent = normalizeLine(line.replace(/^\d+[\).\s-]*/, ''));
+                 briefList.appendChild(li);
+               });
+             }
+          },
+          () => {
+            lastBriefRaw = rawAcc;
+             const lines = parseBriefLines(lastBriefRaw).slice(0, 3);
+             lastBriefLines = lines;
+          }
         );
-        lastBriefRaw = res.reply || '';
-        const lines = parseBriefLines(lastBriefRaw).slice(0, 3);
-        lastBriefLines = lines;
-        briefList.innerHTML = '';
-        lines.forEach((line) => {
-          const li = document.createElement('li');
-          li.textContent = normalizeLine(line.replace(/^\d+[\).\s-]*/, ''));
-          briefList.appendChild(li);
-        });
       } else if (section === 'summary') {
         summaryBody.textContent = '다시 생성 중...';
-        const res = await window.sunshadeAPI.openaiChatCompletion(
+        let rawAcc = '';
+        let isFirst = true;
+        runStreamTask(
           [
             { role: 'system', content: prompts.system || 'You are Sunshade.' },
             { role: 'user', content: `${prompts.sections?.summary || 'Summarize.'}\n\n${lastExtractedText}` }
           ],
-          prompts.sections?.summary
+          prompts.sections?.summary,
+          (chunk) => {
+            if (isFirst) { summaryBody.innerHTML = ''; isFirst = false; }
+            rawAcc += chunk;
+            summaryBody.innerHTML = renderMarkdownToHtml(rawAcc);
+          },
+          () => {
+            lastSummaryRaw = dedupeSummary(rawAcc);
+            summaryBody.innerHTML = renderMarkdownToHtml(lastSummaryRaw);
+          }
         );
-        lastSummaryRaw = dedupeSummary(res.reply || '');
-        summaryBody.innerHTML = renderMarkdownToHtml(lastSummaryRaw || '생성 실패');
       }
       setAlert(null);
     } catch (err) {

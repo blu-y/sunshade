@@ -10,7 +10,10 @@ const DEFAULT_INSTRUCTIONS =
   "You are Sunshade, a concise research assistant. Answer clearly and cite only when confident.";
 const INSTRUCTIONS_PATH = path.join(__dirname, "prompts.json");
 
-async function codexChatCompletion(accessToken, accountId, question, instructionOverride) {
+/**
+ * Streaming completion: yields chunks of text as they arrive.
+ */
+async function* codexChatCompletionStream(accessToken, accountId, question, instructionOverride) {
   if (!accessToken) throw new Error("Missing access token");
   if (!accountId) throw new Error("Missing ChatGPT account id");
   if (!question) throw new Error("Question is empty");
@@ -18,7 +21,6 @@ async function codexChatCompletion(accessToken, accountId, question, instruction
   const body = {
     model: DEFAULT_MODEL,
     instructions: instructionOverride || loadInstructions(),
-    // Responses API shape (similar to OpenAI Responses), stream required by backend
     input: [
       {
         role: "user",
@@ -47,107 +49,54 @@ async function codexChatCompletion(accessToken, accountId, question, instruction
     throw new Error(`Codex error ${res.status}: ${text}`);
   }
 
-  const json = await sseToJson(res);
-  const reply = extractText(json);
-  if (!reply) throw new Error("No reply received from Codex backend");
-  return { reply, model: json.model || DEFAULT_MODEL, usage: json.usage };
-}
-
-async function sseToJson(response) {
-  if (!response.body) throw new Error("Empty response body");
-
-  const reader = response.body.getReader();
+  const reader = res.body.getReader();
   const decoder = new TextDecoder();
-  let full = "";
-  let final = null;
-  const filteredForLog = [];
+  let buffer = "";
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    full += decoder.decode(value, { stream: true });
-  }
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      
+      buffer += decoder.decode(value, { stream: true });
+      
+      const lines = buffer.split("\n");
+      // Process all complete lines
+      buffer = lines.pop() || ""; // Keep the last partial line
 
-  const lines = full.split("\n");
-  for (const line of lines) {
-    if (!line.startsWith("data:")) continue;
-    const payload = line.slice(5).trim();
-    if (!payload || payload === "[DONE]") continue;
-    try {
-      const event = JSON.parse(payload);
-      // Keep small log but skip noisy delta events
-      if (event.type === "response.completed") {
-        filteredForLog.push(payload);
-      }
+      for (const line of lines) {
+        if (!line.startsWith("data:")) continue;
+        const payload = line.slice(5).trim();
+        if (!payload || payload === "[DONE]") continue;
 
-      // Use only response.completed payload as the final response
-      if (event.type === "response.completed") {
-        final = event.response || event;
-      } else if (!final && event.type === "response.output_text.done" && typeof event.text === "string") {
-        final = { output_text: [event.text] };
-      }
-      // All other event types are ignored intentionally
-    } catch {
-      // ignore malformed lines
-    }
-  }
-
-  // Logging removed per request
-
-  // Prefer full final response if present
-  if (final) {
-    return final;
-  }
-  throw new Error("Failed to parse Codex SSE response (no response.completed event)");
-}
-
-function extractText(obj) {
-  if (!obj || typeof obj !== "object") return null;
-
-  // Common shapes: {output_text: ["..."]}, {output:[{content:[{text:""}]}]}, {message:{content:[{text:""}]}}, {content:[{text:""}]}
-  if (Array.isArray(obj.output_text) && obj.output_text.length) {
-    return obj.output_text.join("");
-  }
-
-  if (Array.isArray(obj.output)) {
-    for (const item of obj.output) {
-      if (Array.isArray(item.content)) {
-        const text = item.content.map((p) => p.text || p.value || "").filter(Boolean).join("");
-        if (text) return text;
+        try {
+          const event = JSON.parse(payload);
+          
+          // Case 1: response.output_text.delta (streaming text)
+          if (event.type === "response.output_text.delta" && event.delta) {
+             yield event.delta;
+          }
+          // Case 2: response.text.delta (sometimes used)
+          else if (event.type === "response.text.delta" && event.delta) {
+            yield event.delta;
+          }
+        } catch {
+          // ignore malformed lines
+        }
       }
     }
+  } finally {
+    reader.releaseLock();
   }
-
-  if (obj.message?.content) {
-    const parts = obj.message.content;
-    const text = Array.isArray(parts)
-      ? parts.map((p) => p.text || p.value || "").filter(Boolean).join("")
-      : typeof parts === "string"
-        ? parts
-        : "";
-    if (text) return text;
-  }
-
-  if (Array.isArray(obj.content)) {
-    const text = obj.content.map((p) => p.text || "").filter(Boolean).join("");
-    if (text) return text;
-  }
-
-  // Fallback: pick the first string found in any nested 'text' field
-  const found = deepFindText(obj);
-  return found || null;
 }
 
-function deepFindText(node) {
-  if (typeof node === "string") return node;
-  if (!node || typeof node !== "object") return null;
-  if (node.text && typeof node.text === "string") return node.text;
-  for (const key of Object.keys(node)) {
-    const v = node[key];
-    const res = deepFindText(v);
-    if (res) return res;
+// Keep the non-streaming version for compatibility if needed (wraps the stream)
+async function codexChatCompletion(accessToken, accountId, question, instructionOverride) {
+  let fullText = "";
+  for await (const chunk of codexChatCompletionStream(accessToken, accountId, question, instructionOverride)) {
+    fullText += chunk;
   }
-  return null;
+  return { reply: fullText, model: DEFAULT_MODEL };
 }
 
 function loadInstructions() {
@@ -165,4 +114,4 @@ function loadInstructions() {
   return DEFAULT_INSTRUCTIONS;
 }
 
-module.exports = { codexChatCompletion };
+module.exports = { codexChatCompletion, codexChatCompletionStream };

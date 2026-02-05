@@ -8,7 +8,7 @@ const {
   getValidOpenAIToken,
   logoutOpenAI
 } = require('./src/auth/openai');
-const { codexChatCompletion } = require('./src/llm/codex-chat');
+const { codexChatCompletion, codexChatCompletionStream } = require('./src/llm/codex-chat');
 
 function loadWindowState() {
   try {
@@ -87,6 +87,29 @@ ipcMain.handle('chat:openai:completion', async (_event, { messages, instructions
   const result = await codexChatCompletion(token, accountId, question, instructions);
   return result;
 });
+
+ipcMain.on('chat:openai:stream:start', async (event, { messages, instructions, streamId }) => {
+  try {
+    const { token, accountId } = await getValidOpenAIToken();
+    const userMessage = Array.isArray(messages) ? messages.find((m) => m.role === 'user') : null;
+    const question = userMessage?.content || messages?.[0]?.content || '';
+
+    for await (const chunk of codexChatCompletionStream(token, accountId, question, instructions)) {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('chat:openai:stream:chunk', { streamId, chunk });
+      }
+    }
+    
+    if (!event.sender.isDestroyed()) {
+      event.sender.send('chat:openai:stream:done', { streamId });
+    }
+  } catch (err) {
+    if (!event.sender.isDestroyed()) {
+      event.sender.send('chat:openai:stream:error', { streamId, error: err.message });
+    }
+  }
+});
+
 ipcMain.handle('prompts:get', () => {
   try {
     const p = path.join(__dirname, 'src', 'llm', 'prompts.json');
