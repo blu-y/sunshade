@@ -12,7 +12,8 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
 // UI refs
 const askBtn = document.getElementById('ask-btn');
 const askInput = document.getElementById('ask-input');
-const askOutput = document.getElementById('ask-output');
+const chatHistory = document.getElementById('chat-history');
+const chatEmpty = document.getElementById('chat-empty');
 const openaiChipText = document.getElementById('openai-chip-text');
 const openaiStatusDot = document.getElementById('openai-dot');
 const openaiChip = document.getElementById('openai-chip');
@@ -33,7 +34,9 @@ const resizerRight = document.getElementById('resizer-right');
 const keywordsBody = document.getElementById('keywords-body');
 const briefList = document.getElementById('brief-list');
 const summaryBody = document.getElementById('summary-body');
+const tooltipPortal = document.getElementById('tooltip-portal');
 let promptsCache = null;
+let pinnedChip = null;
 let lastExtractedText = '';
 let lastKeywordsRaw = '';
 let lastBriefRaw = '';
@@ -88,7 +91,8 @@ function logMessage(message, level = 'info') {
     setAlert(message, 'warn');
     console.warn(message);
   } else {
-    setAlert(message, 'info');
+    // Info logs to console only to avoid chip spam
+    // setAlert(message, 'info'); 
     console.log(message);
   }
 }
@@ -183,7 +187,8 @@ async function loadPdf(file) {
     pdfScale = 1.0;
     await renderAllPages();
     updatePdfControls();
-    updateSummaryPlaceholders(true);
+    togglePdfPlaceholder(false); // Only update view, data update is separate
+    updateSummaryPlaceholders(true); // Explicitly update placeholders
     await generateSummaries();
     console.log(`Loaded PDF: ${file.name} (${pdfDoc.numPages} pages)`);
   } catch (err) {
@@ -195,7 +200,7 @@ async function renderAllPages() {
   if (!pdfDoc || !pdfPagesEl) return;
   pdfPagesEl.innerHTML = '';
   pageViews = [];
-  togglePdfPlaceholder(false);
+  // togglePdfPlaceholder(false) removed to prevent resetting summary
   pdfPagesEl.style.display = 'block';
   for (let i = 1; i <= pdfDoc.numPages; i += 1) {
     const page = await pdfDoc.getPage(i);
@@ -246,7 +251,7 @@ function togglePdfPlaceholder(show) {
   pdfEmptyEl.style.display = show ? 'flex' : 'none';
   pdfFooterEl.style.display = show ? 'none' : 'block';
   pdfPagesEl.style.display = show ? 'none' : 'block';
-  updateSummaryPlaceholders(!show && !!pdfDoc);
+  // updateSummaryPlaceholders removed here to prevent reset on zoom
 }
 
 function wirePdfInput() {
@@ -321,31 +326,98 @@ askBtn?.addEventListener('click', () => {
   runChat(q).catch((err) => logMessage(`Chat error: ${err.message}`, 'error'));
 });
 
+// Auto-resize textarea and Enter to send
+askInput?.addEventListener('input', () => {
+  askInput.style.height = 'auto';
+  askInput.style.height = Math.min(askInput.scrollHeight, 200) + 'px';
+});
+
+askInput?.addEventListener('keydown', (e) => {
+  if (e.isComposing) return;
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    askBtn.click();
+  }
+});
+
+// Model selector logic
+let currentModel = localStorage.getItem('sunshade-model') || 'gpt-5.1-codex';
+const modelSelector = document.getElementById('model-selector');
+const modelDropdown = document.getElementById('model-dropdown');
+const currentModelName = document.getElementById('current-model-name');
+
+// Init UI from saved state
+if (currentModelName) currentModelName.textContent = currentModel;
+if (modelDropdown) {
+  modelDropdown.querySelectorAll('.model-option').forEach(el => {
+    el.classList.toggle('selected', el.dataset.model === currentModel);
+  });
+}
+
+modelSelector?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  modelDropdown.classList.toggle('show');
+});
+
+document.addEventListener('click', () => {
+  modelDropdown?.classList.remove('show');
+});
+
+modelDropdown?.addEventListener('click', (e) => {
+  const option = e.target.closest('.model-option');
+  if (!option) return;
+  e.stopPropagation();
+  
+  // Update state
+  currentModel = option.dataset.model;
+  currentModelName.textContent = currentModel;
+  localStorage.setItem('sunshade-model', currentModel); // Save to local storage
+  
+  // Update UI
+  document.querySelectorAll('.model-option').forEach(el => el.classList.remove('selected'));
+  option.classList.add('selected');
+  modelDropdown.classList.remove('show');
+  
+  console.log(`Model switched to ${currentModel}`);
+});
+
 async function runChat(question) {
   if (!askBtn) return;
   askBtn.disabled = true;
-  const prevLabel = askBtn.textContent;
-  askBtn.textContent = '...';
+  // askBtn.textContent = '...'; // Keep icon instead of text change
   setAlert('응답 생성 중...', 'info');
 
-  renderAnswer(question, ''); // Init empty answer container
-  const answerBody = askOutput.lastElementChild; // The div where answer goes
+  // Create new chat item
+  const answerBody = appendChatItem(question);
   let accumulated = '';
+  
+  // Reset input height
+  if (askInput) {
+    askInput.value = '';
+    askInput.style.height = 'auto';
+  }
+
+  // Inject context if available
+  let finalQuestion = question;
+  if (lastExtractedText && lastExtractedText.length > 50) {
+    finalQuestion = `Reference Document:\n${lastExtractedText}\n\nQuestion: ${question}`;
+  }
 
   try {
     // Stream Chat
     await new Promise((resolve, reject) => {
       window.sunshadeAPI.openaiStream(
-        [{ role: 'user', content: question }],
+        [{ role: 'user', content: finalQuestion }],
         undefined, // default instructions
         {
           onChunk: (chunk) => {
             accumulated += chunk;
-            answerBody.textContent = accumulated;
+            answerBody.innerHTML = renderMarkdownToHtml(accumulated);
           },
           onDone: () => resolve(),
           onError: (err) => reject(err)
-        }
+        },
+        currentModel // Pass selected model
       );
     });
     setAlert(null);
@@ -360,42 +432,51 @@ async function runChat(question) {
     throw err;
   } finally {
     askBtn.disabled = false;
-    askBtn.textContent = prevLabel || '질문';
+    // askBtn.textContent = prevLabel || '질문'; // Icon button, no text reset needed
   }
 }
 
-function renderAnswer(question, answer) {
-  if (!askOutput) return;
-  askOutput.classList.remove('muted');
-  // If we are starting a new chat, clear previous or append?
-  // Current logic replaces content.
-  askOutput.innerHTML = '';
-  const label = document.createElement('span');
-  label.className = 'label';
-  label.textContent = '응답';
+function appendChatItem(question) {
+  if (!chatHistory) return null;
+  
+  // Hide empty placeholder
+  if (chatEmpty) chatEmpty.style.display = 'none';
+  chatHistory.style.display = 'block';
+  chatHistory.classList.remove('placeholder');
+
+  const item = document.createElement('div');
+  item.className = 'chat-item';
+  
   const qEl = document.createElement('div');
-  qEl.style.fontWeight = '600';
-  qEl.style.marginBottom = '6px';
-  qEl.textContent = `Q: ${question}`;
+  qEl.className = 'chat-q';
+  qEl.textContent = question;
+  
   const aEl = document.createElement('div');
-  aEl.textContent = answer; // will be updated via stream
-  askOutput.appendChild(label);
-  askOutput.appendChild(qEl);
-  askOutput.appendChild(aEl);
+  aEl.className = 'chat-a';
+  aEl.textContent = ''; // Will be filled by stream
+  
+  item.appendChild(qEl);
+  item.appendChild(aEl);
+  
+  chatHistory.appendChild(item);
+  
+  // Auto scroll to bottom
+  item.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  
+  return aEl;
 }
 
 function renderError(message) {
-  if (!askOutput) return;
-  askOutput.classList.remove('muted');
-  askOutput.innerHTML = '';
-  const label = document.createElement('span');
-  label.className = 'label';
-  label.textContent = '오류';
-  const body = document.createElement('div');
-  body.textContent = message;
-  body.style.color = '#b91c1c';
-  askOutput.appendChild(label);
-  askOutput.appendChild(body);
+  if (!chatHistory) return;
+  if (chatEmpty) chatEmpty.style.display = 'none';
+  chatHistory.style.display = 'block';
+  
+  const item = document.createElement('div');
+  item.className = 'chat-item';
+  item.innerHTML = `<div class="chat-a" style="color:#ef4444; padding-left:0;">⚠️ ${message}</div>`;
+  
+  chatHistory.appendChild(item);
+  item.scrollIntoView({ behavior: 'smooth', block: 'end' });
 }
 
 function updateSummaryPlaceholders(hasPdf) {
@@ -635,16 +716,75 @@ function tryParseKeywords(raw) {
     .filter(Boolean);
 }
 
-// Toggle active tooltip on click for scrollable panel
+// Tooltip helpers (Portal + Pinned)
+function showTooltip(chip) {
+  if (!chip || !chip.dataset.desc || !tooltipPortal) return;
+  
+  tooltipPortal.textContent = chip.dataset.desc;
+  tooltipPortal.classList.add('show');
+  const rect = chip.getBoundingClientRect();
+  
+  // Position below the chip, centered
+  let top = rect.bottom + 8;
+  let left = rect.left + (rect.width / 2) - (tooltipPortal.offsetWidth / 2);
+  
+  // Boundary check
+  if (left < 10) left = 10;
+  if (left + tooltipPortal.offsetWidth > window.innerWidth - 10) {
+    left = window.innerWidth - tooltipPortal.offsetWidth - 10;
+  }
+  
+  tooltipPortal.style.top = `${top}px`;
+  tooltipPortal.style.left = `${left}px`;
+}
+
+function hideTooltip() {
+  if (tooltipPortal) {
+    tooltipPortal.classList.remove('show');
+  }
+}
+
+// Toggle active tooltip on click/hover for scrollable panel
+// Using portal to escape overflow:hidden
+document.addEventListener('mouseover', (e) => {
+  if (pinnedChip) return; // Don't interfere if pinned
+  const chip = e.target.closest('.keyword-chip');
+  if (chip) showTooltip(chip);
+});
+
+document.addEventListener('mouseout', (e) => {
+  if (pinnedChip) return; // Don't interfere if pinned
+  const chip = e.target.closest('.keyword-chip');
+  if (chip) hideTooltip();
+});
+
 document.addEventListener('click', (e) => {
   const chip = e.target.closest('.keyword-chip');
-  if (!chip) {
-    document.querySelectorAll('.keyword-chip.active').forEach((el) => el.classList.remove('active'));
+  
+  // Case 1: Clicked on a chip
+  if (chip) {
+    e.stopPropagation(); // Prevent document click
+    if (pinnedChip === chip) {
+      // Toggle off
+      pinnedChip = null;
+      hideTooltip();
+      chip.classList.remove('active');
+    } else {
+      // Toggle on (new pin)
+      if (pinnedChip) pinnedChip.classList.remove('active');
+      pinnedChip = chip;
+      chip.classList.add('active');
+      showTooltip(chip);
+    }
     return;
   }
-  const alreadyActive = chip.classList.contains('active');
-  document.querySelectorAll('.keyword-chip.active').forEach((el) => el.classList.remove('active'));
-  if (!alreadyActive) chip.classList.add('active');
+  
+  // Case 2: Clicked outside (and not on portal itself if we want to allow selecting text in tooltip)
+  if (pinnedChip && !e.target.closest('#tooltip-portal')) {
+    pinnedChip.classList.remove('active');
+    pinnedChip = null;
+    hideTooltip();
+  }
 });
 
 // Generic stream helper
@@ -660,7 +800,8 @@ function runStreamTask(messages, instruction, onChunk, onDone) {
           resolve();
         },
         onError: reject
-      }
+      },
+      currentModel // Pass global model preference
     );
   });
 }
@@ -669,28 +810,28 @@ async function generateSummaries() {
   if (!pdfDoc) return;
   try {
     const prompts = await loadPrompts();
-    const text = await extractPdfText(pdfDoc, 6, 12000);
+    // Increase limit to capture full content (approx 100 pages or 300k chars)
+    const text = await extractPdfText(pdfDoc, 100, 300000);
     if (!text) return;
     lastExtractedText = text;
-
+    
     // keywords
     if (keywordsBody) {
       keywordsBody.textContent = '생성 중...';
-      keywordsBody.classList.remove('placeholder');
+      // keywordsBody.classList.remove('placeholder'); // Keep placeholder style initially
       
       let rawAcc = '';
+      const systemPrompt = prompts.system || 'You are Sunshade.';
+      const taskPrompt = prompts.sections?.keywords || 'Extract keywords.';
+      
       runStreamTask(
         [
-          { role: 'system', content: prompts.system || 'You are Sunshade.' },
-          { role: 'user', content: `${prompts.sections?.keywords || 'Extract keywords.'}\n\n${text}` }
+          { role: 'user', content: `${taskPrompt}\n\n${text}` }
         ],
-        prompts.sections?.keywords,
+        `${systemPrompt}\n\n${taskPrompt}`, // Combine system + task prompt for instructions
         (chunk) => {
+          if (rawAcc === '') keywordsBody.classList.remove('placeholder'); // Remove on first chunk
           rawAcc += chunk;
-          // For JSON, we can't parse partial easily, so we just wait or show raw?
-          // Let's show raw text if it looks like English/Korean, but JSON usually starts with [
-          // If we want real-time feedback, maybe just dots?
-          // keywordsBody.textContent = '생성 중' + '.'.repeat(rawAcc.length % 4);
         },
         () => {
           lastKeywordsRaw = rawAcc;
@@ -705,16 +846,19 @@ async function generateSummaries() {
   // 3줄 요약
   if (briefList) {
     briefList.innerHTML = '<li>생성 중...</li>';
-    briefList.classList.remove('placeholder');
+    // briefList.classList.remove('placeholder'); // Keep placeholder style
     
     let rawAcc = '';
+    const systemPrompt = prompts.system || 'You are Sunshade.';
+    const taskPrompt = prompts.sections?.brief || 'Give 3 bullet sentences.';
+
     runStreamTask(
       [
-        { role: 'system', content: prompts.system || 'You are Sunshade.' },
-        { role: 'user', content: `${prompts.sections?.brief || 'Give 3 bullet sentences.'}\n\n${text}` }
+        { role: 'user', content: `${taskPrompt}\n\n${text}` }
       ],
-      prompts.sections?.brief,
+      `${systemPrompt}\n\n${taskPrompt}`, // Combine system + task prompt
       (chunk) => {
+        if (rawAcc === '') briefList.classList.remove('placeholder'); // Remove on first chunk
         rawAcc += chunk;
         // Try parsing lines on the fly?
         const lines = parseBriefLines(rawAcc).slice(0, 3);
@@ -751,25 +895,26 @@ async function generateSummaries() {
     // 요약
     if (summaryBody) {
       summaryBody.textContent = '생성 중...';
-      summaryBody.classList.remove('placeholder');
+      // summaryBody.classList.remove('placeholder'); // Keep placeholder style
       summaryBody.classList.remove('info-text');
       
       let rawAcc = '';
       let isFirst = true;
+      const systemPrompt = prompts.system || 'You are Sunshade.';
+      const taskPrompt = prompts.sections?.summary || 'Summarize.';
+
       runStreamTask(
         [
-          { role: 'system', content: prompts.system || 'You are Sunshade.' },
-          { role: 'user', content: `${prompts.sections?.summary || 'Summarize.'}\n\n${text}` }
+          { role: 'user', content: `${taskPrompt}\n\n${text}` }
         ],
-        prompts.sections?.summary,
+        `${systemPrompt}\n\n${taskPrompt}`, // Combine system + task prompt
         (chunk) => {
           if (isFirst) {
             summaryBody.innerHTML = '';
+            summaryBody.classList.remove('placeholder'); // Remove on first chunk
             isFirst = false;
           }
           rawAcc += chunk;
-          // Render markdown incrementally
-          // Note: incomplete markdown might look broken, but better than waiting
           summaryBody.innerHTML = renderMarkdownToHtml(rawAcc);
         },
         () => {
@@ -857,6 +1002,16 @@ document.addEventListener('click', async (e) => {
     if (section === 'keywords') text = formatKeywordsForCopy(lastKeywordsRaw);
     if (section === 'brief') text = formatBriefForCopy();
     if (section === 'summary') text = lastSummaryRaw;
+    if (section === 'chat') {
+        // Copy entire chat history
+        const history = [];
+        document.querySelectorAll('.chat-item').forEach(item => {
+            const q = item.querySelector('.chat-q')?.textContent;
+            const a = item.querySelector('.chat-a')?.textContent;
+            if (q && a) history.push(`Q: ${q}\nA: ${a}`);
+        });
+        text = history.join('\n\n');
+    }
     if (!text) {
       showToast(btn, 'Nothing to copy');
       return;
@@ -870,7 +1025,13 @@ document.addEventListener('click', async (e) => {
     return;
   }
 
-  if (action === 'regen') {
+  if (action === 'regen' || action === 'clear') {
+    if (section === 'chat' && action === 'clear') {
+        if (chatHistory) chatHistory.innerHTML = '';
+        if (chatEmpty) chatEmpty.style.display = 'block';
+        showToast(btn, 'Cleared');
+        return;
+    }
     if (!lastExtractedText) {
       showToast(btn, 'Load PDF first');
       return;
@@ -1011,3 +1172,4 @@ setupResizer(resizerLeft, 'left');
 setupResizer(resizerRight, 'right');
 updatePdfControls();
 togglePdfPlaceholder(true);
+updateSummaryPlaceholders(false); // Init placeholders

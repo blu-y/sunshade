@@ -80,21 +80,21 @@ ipcMain.handle('auth:openai:status', () => ensureOpenAIConfig());
 ipcMain.handle('auth:openai:login', () => signInWithOpenAI());
 ipcMain.handle('auth:openai:token', () => getValidOpenAIToken());
 ipcMain.handle('auth:openai:logout', () => logoutOpenAI());
-ipcMain.handle('chat:openai:completion', async (_event, { messages, instructions }) => {
+ipcMain.handle('chat:openai:completion', async (_event, { messages, instructions, model }) => {
   const { token, accountId } = await getValidOpenAIToken();
   const userMessage = Array.isArray(messages) ? messages.find((m) => m.role === 'user') : null;
   const question = userMessage?.content || messages?.[0]?.content || '';
-  const result = await codexChatCompletion(token, accountId, question, instructions);
+  const result = await codexChatCompletion(token, accountId, question, instructions, model);
   return result;
 });
 
-ipcMain.on('chat:openai:stream:start', async (event, { messages, instructions, streamId }) => {
+ipcMain.on('chat:openai:stream:start', async (event, { messages, instructions, streamId, model }) => {
   try {
     const { token, accountId } = await getValidOpenAIToken();
     const userMessage = Array.isArray(messages) ? messages.find((m) => m.role === 'user') : null;
     const question = userMessage?.content || messages?.[0]?.content || '';
 
-    for await (const chunk of codexChatCompletionStream(token, accountId, question, instructions)) {
+    for await (const chunk of codexChatCompletionStream(token, accountId, question, instructions, model)) {
       if (!event.sender.isDestroyed()) {
         event.sender.send('chat:openai:stream:chunk', { streamId, chunk });
       }

@@ -7,11 +7,11 @@ contextBridge.exposeInMainWorld('sunshadeAPI', {
   openaiLogout: () => ipcRenderer.invoke('auth:openai:logout'),
   
   // Legacy non-streaming
-  openaiChatCompletion: (messages, instructions) =>
-    ipcRenderer.invoke('chat:openai:completion', { messages, instructions }),
+  openaiChatCompletion: (messages, instructions, model) =>
+    ipcRenderer.invoke('chat:openai:completion', { messages, instructions, model }),
     
   // Streaming support
-  openaiStream: (messages, instructions, callbacks) => {
+  openaiStream: (messages, instructions, callbacks, model) => {
     const streamId = Math.random().toString(36).slice(2);
     
     const chunkHandler = (_event, data) => {
@@ -44,7 +44,7 @@ contextBridge.exposeInMainWorld('sunshadeAPI', {
     ipcRenderer.on('chat:openai:stream:done', doneHandler);
     ipcRenderer.on('chat:openai:stream:error', errorHandler);
 
-    ipcRenderer.send('chat:openai:stream:start', { messages, instructions, streamId });
+    ipcRenderer.send('chat:openai:stream:start', { messages, instructions, streamId, model });
     
     // Return unsubscribe function
     return cleanup;

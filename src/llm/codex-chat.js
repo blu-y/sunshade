@@ -13,13 +13,13 @@ const INSTRUCTIONS_PATH = path.join(__dirname, "prompts.json");
 /**
  * Streaming completion: yields chunks of text as they arrive.
  */
-async function* codexChatCompletionStream(accessToken, accountId, question, instructionOverride) {
+async function* codexChatCompletionStream(accessToken, accountId, question, instructionOverride, modelOverride) {
   if (!accessToken) throw new Error("Missing access token");
   if (!accountId) throw new Error("Missing ChatGPT account id");
   if (!question) throw new Error("Question is empty");
 
   const body = {
-    model: DEFAULT_MODEL,
+    model: modelOverride || DEFAULT_MODEL,
     instructions: instructionOverride || loadInstructions(),
     input: [
       {
@@ -91,12 +91,12 @@ async function* codexChatCompletionStream(accessToken, accountId, question, inst
 }
 
 // Keep the non-streaming version for compatibility if needed (wraps the stream)
-async function codexChatCompletion(accessToken, accountId, question, instructionOverride) {
+async function codexChatCompletion(accessToken, accountId, question, instructionOverride, modelOverride) {
   let fullText = "";
-  for await (const chunk of codexChatCompletionStream(accessToken, accountId, question, instructionOverride)) {
+  for await (const chunk of codexChatCompletionStream(accessToken, accountId, question, instructionOverride, modelOverride)) {
     fullText += chunk;
   }
-  return { reply: fullText, model: DEFAULT_MODEL };
+  return { reply: fullText, model: modelOverride || DEFAULT_MODEL };
 }
 
 function loadInstructions() {
