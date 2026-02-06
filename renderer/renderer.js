@@ -1,5 +1,5 @@
 import * as pdfjsLib from '../node_modules/pdfjs-dist/build/pdf.mjs';
-import { PDFPageView, EventBus } from '../node_modules/pdfjs-dist/web/pdf_viewer.mjs';
+import { PDFViewer, EventBus, PDFLinkService } from '../node_modules/pdfjs-dist/web/pdf_viewer.mjs';
 import { marked } from '../node_modules/marked/lib/marked.esm.js';
 import katex from '../node_modules/katex/dist/katex.mjs';
 
@@ -25,9 +25,9 @@ const pdfZoomOutBtn = document.getElementById('pdf-zoom-out');
 const pdfFitBtn = document.getElementById('pdf-fit');
 const pdfPageDisplay = document.getElementById('pdf-page-display');
 const pdfFileInput = document.getElementById('pdf-file-input');
-const pdfFooterEl = document.getElementById('pdf-footer');
+// const pdfFooterEl = document.getElementById('pdf-footer'); // Removed
 const pdfEmptyEl = document.getElementById('pdf-empty');
-const pdfPagesEl = document.getElementById('pdf-pages');
+const viewerContainer = document.getElementById('viewerContainer'); // New container
 const layout = document.getElementById('layout');
 const resizerLeft = document.getElementById('resizer-left');
 const resizerRight = document.getElementById('resizer-right');
@@ -46,10 +46,26 @@ let lastKeywordsList = [];
 
 // State
 let pdfDoc = null;
-let pdfScale = 1.0;
-let pdfPage = 1;
-let pageViews = [];
 const eventBus = new EventBus();
+const pdfLinkService = new PDFLinkService({ eventBus });
+const pdfViewer = new PDFViewer({
+  container: viewerContainer,
+  eventBus: eventBus,
+  linkService: pdfLinkService,
+  textLayerMode: 2, // Enable text selection
+});
+pdfLinkService.setViewer(pdfViewer);
+
+// Sync page number
+eventBus.on('pagesinit', () => {
+  pdfViewer.currentScaleValue = 'auto'; 
+});
+eventBus.on('pagechanging', (evt) => {
+  const page = evt.pageNumber;
+  const num = pdfViewer.pagesCount;
+  if (pdfPageDisplay) pdfPageDisplay.textContent = `${page} / ${num}`;
+  updatePdfControls();
+});
 
 // Default chip state
 if (openaiChipText && openaiStatusDot && openaiChip) {
@@ -176,19 +192,20 @@ refreshOpenAIStatus().catch((err) => console.error('OpenAI status error', err));
 
 // PDF render helpers
 async function loadPdf(file) {
-  if (!pdfjsLib || !pdfPagesEl) {
+  if (!pdfjsLib || !viewerContainer) {
     logMessage('PDF engine not ready', 'warn');
     return;
   }
   try {
     const arrayBuffer = await file.arrayBuffer();
-    pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-    pdfPage = 1;
-    pdfScale = 1.0;
-    await renderAllPages();
-    updatePdfControls();
-    togglePdfPlaceholder(false); // Only update view, data update is separate
-    updateSummaryPlaceholders(true); // Explicitly update placeholders
+    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+    pdfDoc = await loadingTask.promise;
+    
+    pdfViewer.setDocument(pdfDoc);
+    pdfLinkService.setDocument(pdfDoc, null);
+    
+    togglePdfPlaceholder(false); 
+    updateSummaryPlaceholders(true); 
     await generateSummaries();
     console.log(`Loaded PDF: ${file.name} (${pdfDoc.numPages} pages)`);
   } catch (err) {
@@ -196,66 +213,33 @@ async function loadPdf(file) {
   }
 }
 
-async function renderAllPages() {
-  if (!pdfDoc || !pdfPagesEl) return;
-  pdfPagesEl.innerHTML = '';
-  pageViews = [];
-  // togglePdfPlaceholder(false) removed to prevent resetting summary
-  pdfPagesEl.style.display = 'block';
-  for (let i = 1; i <= pdfDoc.numPages; i += 1) {
-    const page = await pdfDoc.getPage(i);
-    const viewport = page.getViewport({ scale: pdfScale });
-    const container = document.createElement('div');
-    container.className = 'pdf-page';
-    pdfPagesEl.appendChild(container);
-
-    const pageView = new PDFPageView({
-      container,
-      id: i,
-      scale: pdfScale,
-      defaultViewport: viewport,
-      eventBus,
-      textLayerMode: 1,
-      annotationMode: 0,
-    });
-    pageView.setPdfPage(page);
-    await pageView.draw();
-    pageViews.push(pageView);
-  }
-  pdfFooterEl.style.display = 'block';
-  pdfFooterEl.textContent = `Page 1 of ${pdfDoc.numPages}`;
-  setAlert(null);
-}
+// renderAllPages removed (handled by PDFViewer)
 
 function updatePdfControls() {
+  const page = pdfViewer.currentPageNumber;
+  const num = pdfViewer.pagesCount;
+  
   if (pdfPageDisplay) {
-    pdfPageDisplay.textContent = pdfDoc
-      ? `${pdfPage} / ${pdfDoc.numPages}`
-      : '- / -';
+    pdfPageDisplay.textContent = num ? `${page} / ${num}` : '- / -';
   }
-  const disabled = !pdfDoc;
+  
+  const disabled = !num;
   [pdfPrevBtn, pdfNextBtn, pdfZoomInBtn, pdfZoomOutBtn, pdfFitBtn].forEach((btn) => {
     if (btn) btn.disabled = disabled;
   });
-  if (pdfPrevBtn) pdfPrevBtn.disabled = disabled || pdfPage <= 1;
-  if (pdfNextBtn) pdfNextBtn.disabled = disabled || (pdfDoc && pdfPage >= pdfDoc.numPages);
-  if (pdfFooterEl) {
-    pdfFooterEl.textContent = pdfDoc
-      ? `Page ${pdfPage} of ${pdfDoc.numPages}`
-      : ' ';
-  }
+  
+  if (pdfPrevBtn) pdfPrevBtn.disabled = disabled || page <= 1;
+  if (pdfNextBtn) pdfNextBtn.disabled = disabled || page >= num;
 }
 
 function togglePdfPlaceholder(show) {
-  if (!pdfEmptyEl || !pdfPagesEl || !pdfFooterEl) return;
+  if (!pdfEmptyEl || !viewerContainer) return;
   pdfEmptyEl.style.display = show ? 'flex' : 'none';
-  pdfFooterEl.style.display = show ? 'none' : 'block';
-  pdfPagesEl.style.display = show ? 'none' : 'block';
-  // updateSummaryPlaceholders removed here to prevent reset on zoom
+  viewerContainer.style.visibility = show ? 'hidden' : 'visible';
 }
 
 function wirePdfInput() {
-  const dropTargets = [pdfPagesEl, pdfEmptyEl];
+  const dropTargets = [viewerContainer, pdfEmptyEl];
   dropTargets.forEach((el) => {
     el?.addEventListener('dragover', (e) => {
       e.preventDefault();
@@ -274,12 +258,7 @@ function wirePdfInput() {
 }
 
 async function scrollToPage(targetPage) {
-  if (!pageViews.length || !pdfPagesEl) return;
-  const idx = Math.min(Math.max(targetPage, 1), pageViews.length) - 1;
-  const targetDiv = pageViews[idx]?.div;
-  if (targetDiv) targetDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  pdfPage = idx + 1;
-  updatePdfControls();
+  // handled by pdfViewer.currentPageNumber
 }
 
 // Toolbar wiring
@@ -291,32 +270,19 @@ pdfFileInput?.addEventListener('change', () => {
   }
 });
 pdfPrevBtn?.addEventListener('click', async () => {
-  if (!pdfDoc || pdfPage <= 1) return;
-  pdfPage -= 1;
-  await scrollToPage(pdfPage);
+  pdfViewer.currentPageNumber--;
 });
 pdfNextBtn?.addEventListener('click', async () => {
-  if (!pdfDoc || pdfPage >= pdfDoc.numPages) return;
-  pdfPage += 1;
-  await scrollToPage(pdfPage);
+  pdfViewer.currentPageNumber++;
 });
 pdfZoomInBtn?.addEventListener('click', async () => {
-  if (!pdfDoc) return;
-  pdfScale = Math.min(pdfScale + 0.1, 3);
-  await renderAllPages();
+  pdfViewer.currentScale += 0.1;
 });
 pdfZoomOutBtn?.addEventListener('click', async () => {
-  if (!pdfDoc) return;
-  pdfScale = Math.max(pdfScale - 0.1, 0.4);
-  await renderAllPages();
+  pdfViewer.currentScale -= 0.1;
 });
 pdfFitBtn?.addEventListener('click', async () => {
-  if (!pdfDoc || !pdfPagesEl) return;
-  const containerWidth = pdfPagesEl.clientWidth || 800;
-  const page = await pdfDoc.getPage(pdfPage);
-  const viewport = page.getViewport({ scale: 1 });
-  pdfScale = containerWidth / viewport.width;
-  await renderAllPages();
+  pdfViewer.currentScaleValue = 'page-fit';
 });
 
 // Ask button placeholder

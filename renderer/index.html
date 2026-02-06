@@ -8,7 +8,7 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="../node_modules/pdfjs-dist/web/pdf_viewer.css" />
+    <link rel="stylesheet" href="pdf_viewer.css">
     <link rel="stylesheet" href="../node_modules/katex/dist/katex.min.css" />
     <style>
       button, input, select, textarea {
@@ -84,12 +84,19 @@
         font-weight: 600;
       }
       .pdf-pane {
-        background: #f8fafc;
-        overflow-y: auto;
-        overflow-x: hidden;
+        background: #525659; /* PDF Viewer gray */
         position: relative;
-        padding: 12px 8px;
-        height: 100vh; /* Fill height */
+        padding: 0;
+        height: 100vh;
+        overflow: hidden; /* Let viewerContainer handle scroll */
+      }
+      #viewerContainer {
+        overflow: auto;
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        top: 0;
+        left: 0;
       }
       .pdf-toolbar {
         display: flex;
@@ -657,11 +664,12 @@
           <button id="pdf-fit">맞춤</button>
           <input type="file" id="pdf-file-input" accept="application/pdf" style="display:none" />
         </div>
-        <article class="pdf-doc">
-          <div class="pdf-empty" id="pdf-empty">파일을 선택하면 페이지가 표시됩니다.</div>
-          <div id="pdf-pages"></div>
-          <div class="pdf-footer" id="pdf-footer"> </div>
-        </article>
+        
+        <div id="viewerContainer">
+          <div id="viewer" class="pdfViewer"></div>
+        </div>
+        
+        <div class="pdf-empty" id="pdf-empty">파일을 선택하면 페이지가 표시됩니다.</div>
       </section>
 
       <div class="col-resizer" id="resizer-right"></div>
