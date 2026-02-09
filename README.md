@@ -11,7 +11,7 @@
 
 [Download](https://github.com/blu-y/sunshade/releases/tag/v0.1.0)
 
-### Install Manually
+### 🛠️ Install Manually
 
 #### Manual Install Requirements
 
