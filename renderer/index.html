@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self'; connect-src 'self' https://auth.openai.com https://chatgpt.com https://chat.openai.com https://api.openai.com;" />
-    <title>Sunshade</title>
+    <title>🏖️Sunshade</title>
     <link
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
       rel="stylesheet"
@@ -54,25 +54,138 @@
       .side-nav {
         background: #f8fafc;
         border-right: 1px solid #e5e7eb;
-        padding: 14px 10px 10px;
-        overflow-y: auto; /* Explicit vertical scroll */
-        height: 100vh; /* Fill height */
+        padding: 0; /* Remove padding for edge-to-edge tabs */
+        overflow-y: hidden; /* Container handles scroll */
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
       }
-      .side-nav button {
-        border: 1px solid #e2e8f0;
+      .brand-header {
+        font-size: 14px;
+        font-weight: 700;
+        color: #1e293b;
+        padding: 14px 16px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        border-bottom: 1px solid #f1f5f9;
+        flex-shrink: 0;
+      }
+      .side-nav-tabs {
+        display: flex;
+        gap: 0;
+        border-bottom: 1px solid #e2e8f0;
         background: #fff;
-        border-radius: 8px;
-        padding: 10px 12px;
-        width: 100%;
-        font-weight: 600;
-        color: #0f172a;
+        flex-shrink: 0;
+      }
+      .nav-tab-btn {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 10px 0;
         cursor: pointer;
+        background: transparent;
+        border: none;
+        border-bottom: 2px solid transparent;
+        transition: all 0.2s;
+        opacity: 0.5;
       }
-      .side-nav ul {
-        list-style: none;
-        padding: 0;
-        margin: 16px 0 0;
+      .nav-tab-btn:hover {
+        opacity: 0.8;
+        background: #f8fafc;
       }
+      .nav-tab-btn.active {
+        opacity: 1;
+        border-bottom-color: #2563eb;
+        background: #fff;
+      }
+      .nav-tab-btn img {
+        /* Optional: filter to blue when active? */
+        /* filter: brightness(0) saturate(100%) invert(32%) sepia(63%) saturate(3062%) hue-rotate(209deg) brightness(96%) contrast(96%); */
+      }
+      .tab-content {
+        display: none;
+        flex: 1;
+        overflow-y: auto;
+        padding: 16px 12px; /* Content padding */
+        min-height: 0;
+      }
+      .tab-content.active {
+        display: block;
+      }
+      .tab-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 12px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid #f1f5f9;
+      }
+      .tab-count {
+        font-size: 12px;
+        font-weight: 600;
+        color: #64748b;
+      }
+      .tab-action-btn {
+        width: 24px;
+        height: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid #e2e8f0;
+        border-radius: 6px;
+        background: #fff;
+        cursor: pointer;
+        color: #64748b;
+        transition: all 0.1s;
+      }
+      .tab-action-btn:hover {
+        background: #f8fafc;
+        color: #0f172a;
+        border-color: #cbd5e1;
+      }
+      .outline-item {
+        padding: 6px 8px; /* Increased padding slightly */
+        font-size: 14px; /* Larger font */
+        color: #334155;
+        cursor: pointer;
+        user-select: none; /* Prevent text selection cursor */
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        border-radius: 4px;
+        display: flex; /* Flex layout */
+        align-items: center;
+        gap: 6px;
+      }
+      .outline-item.active {
+        color: #2563eb;
+        background: #eff6ff;
+        font-weight: 600;
+      }
+      .outline-item:hover {
+        color: #2563eb;
+        background: #eff6ff;
+      }
+      .outline-children {
+        margin-left: 12px;
+        border-left: 1px solid #e2e8f0;
+        padding-left: 8px;
+        display: none;
+      }
+      .outline-children.expanded {
+        display: block;
+      }
+      .outline-toggle {
+        display: inline-block;
+        width: 16px;
+        text-align: center;
+        color: #94a3b8;
+        font-size: 10px;
+        margin-right: 2px;
+      }
+      .outline-toggle:hover { color: #475569; }
       .side-nav li {
         padding: 8px 6px;
         font-size: 14px;
@@ -805,12 +918,44 @@
   <body>
     <div class="layout" id="layout">
       <aside class="side-nav">
-        <button>빠른 분석</button>
-        <ul>
-          <li class="active">Index Panel</li>
-          <li>즐겨찾기</li>
-          <li>히스토리</li>
-        </ul>
+        <div class="brand-header">🏖️ Sunshade</div>
+        
+        <div class="side-nav-tabs">
+          <button class="nav-tab-btn active" data-tab="index" title="목차">
+            <img src="../src/index.png" width="16" height="16" alt="Index" />
+          </button>
+          <button class="nav-tab-btn" data-tab="favorite" title="즐겨찾기">
+            <img src="../src/favorite.png" width="16" height="16" alt="Favorite" />
+          </button>
+          <button class="nav-tab-btn" data-tab="history" title="히스토리">
+            <img src="../src/history.png" width="16" height="16" alt="History" />
+          </button>
+        </div>
+
+        <!-- Tab Contents -->
+        <div id="tab-index" class="tab-content active">
+          <div id="outline-view" class="info-text" style="text-align:center; padding-top:20px; font-size:12px;">PDF를 열면 목차가 표시됩니다.</div>
+        </div>
+        
+        <div id="tab-favorite" class="tab-content">
+          <div class="tab-header">
+            <span class="tab-count" id="fav-count">0개</span>
+            <button class="tab-action-btn" title="추가">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            </button>
+          </div>
+          <div class="info-text" style="text-align:center; padding-top:20px; font-size:12px;">즐겨찾기 목록이 없습니다.</div>
+        </div>
+        
+        <div id="tab-history" class="tab-content">
+          <div class="tab-header">
+            <span class="tab-count" id="hist-count">0개</span>
+            <button class="tab-action-btn" title="전체 삭제">
+              <img src="../src/recycle-bin.png" width="12" height="12" alt="clear" />
+            </button>
+          </div>
+          <div class="info-text" style="text-align:center; padding-top:20px; font-size:12px;">히스토리가 없습니다.</div>
+        </div>
       </aside>
 
       <div class="col-resizer" id="resizer-left"></div>

@@ -37,6 +37,7 @@ const keywordsBody = document.getElementById('keywords-body');
 const briefList = document.getElementById('brief-list');
 const summaryBody = document.getElementById('summary-body');
 const tooltipPortal = document.getElementById('tooltip-portal');
+const outlineView = document.getElementById('outline-view');
 let promptsCache = null;
 let pinnedChip = null;
 let lastExtractedText = '';
@@ -68,6 +69,7 @@ eventBus.on('pagechanging', (evt) => {
   const num = pdfViewer.pagesCount;
   if (pdfPageDisplay) pdfPageDisplay.textContent = `${page} / ${num}`;
   updatePdfControls(); // Ensure controls are updated
+  updateOutlineHighlight(page); // Highlight outline
 });
 eventBus.on('scalechanging', (evt) => {
   if (pdfZoomLevel && document.activeElement !== pdfZoomLevel) {
@@ -225,6 +227,10 @@ async function loadPdf(file) {
     pdfLinkService.setDocument(pdfDoc, null);
     
     document.querySelector('.pdf-pane').classList.add('has-pdf'); // Dark bg
+    
+    // Load Outline
+    loadOutline(pdfDoc);
+
     togglePdfPlaceholder(false); 
     updateSummaryPlaceholders(true); 
     await generateSummaries();
@@ -993,6 +999,179 @@ async function extractPdfText(doc, maxPages = 6, maxChars = 12000) {
   }
 }
 
+// Load Outline
+async function loadOutline(doc) {
+  if (!outlineView) return;
+  outlineView.textContent = '목차 불러오는 중...';
+  try {
+    const outline = await doc.getOutline();
+    if (!outline || outline.length === 0) {
+      outlineView.textContent = '목차 정보가 없습니다.';
+      return;
+    }
+    outlineView.innerHTML = '';
+    outlineView.style.textAlign = 'left';
+    outlineView.style.paddingTop = '0';
+    
+    // Render tree first
+    renderOutlineTree(outline, outlineView);
+    
+    // Resolve page numbers in background for highlighting
+    resolveOutlinePages(outline);
+  } catch (err) {
+    console.error('Outline load error:', err);
+    outlineView.textContent = '목차를 불러올 수 없습니다.';
+  }
+}
+
+// Map to store page number -> DOM elements
+const outlinePageMap = new Map();
+
+async function resolveOutlinePages(items) {
+  // Flatten items to process
+  const queue = [...items];
+  while (queue.length > 0) {
+    const item = queue.shift();
+    if (item.items && item.items.length > 0) {
+      queue.push(...item.items);
+    }
+    
+    if (item.dest) {
+      try {
+        let dest = item.dest;
+        if (typeof dest === 'string') {
+          dest = await pdfDoc.getDestination(dest);
+        }
+        if (Array.isArray(dest)) {
+          const ref = dest[0];
+          const pageIndex = await pdfDoc.getPageIndex(ref);
+          const pageNum = pageIndex + 1;
+          
+          // Store in map
+          if (!outlinePageMap.has(pageNum)) {
+            outlinePageMap.set(pageNum, []);
+          }
+          if (item._dom) {
+            outlinePageMap.get(pageNum).push(item._dom);
+          }
+        }
+      } catch (e) {
+        // ignore resolve errors
+      }
+    }
+  }
+}
+
+function updateOutlineHighlight(pageNum) {
+  // Remove previous active
+  document.querySelectorAll('.outline-item.active').forEach(el => el.classList.remove('active'));
+  
+  // Find range match
+  // Look for the outline item with the largest page number <= current pageNum
+  const pages = Array.from(outlinePageMap.keys()).sort((a, b) => a - b);
+  let targetPage = -1;
+  
+  for (const p of pages) {
+    if (p <= pageNum) {
+      targetPage = p;
+    } else {
+      break; // pages are sorted, so we can stop early
+    }
+  }
+  
+  if (targetPage !== -1) {
+    const items = outlinePageMap.get(targetPage);
+    if (items && items.length > 0) {
+      items.forEach(el => {
+        el.classList.add('active');
+        // Only scroll if it's a new section start (optional optimization)
+        if (targetPage === pageNum) {
+           el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      });
+    }
+  }
+}
+
+function renderOutlineTree(items, container) {
+  const ul = document.createElement('div');
+  ul.style.display = 'flex';
+  ul.style.flexDirection = 'column';
+  ul.style.gap = '2px'; // Spacing between items
+  
+  items.forEach(item => {
+    const div = document.createElement('div');
+    
+    // Item row
+    const row = document.createElement('div');
+    row.className = 'outline-item';
+    row.title = item.title;
+    
+    // Store DOM reference for highlighting
+    item._dom = row;
+    
+    // Toggle icon
+    const hasChildren = item.items && item.items.length > 0;
+    const toggle = document.createElement('span');
+    toggle.className = 'outline-toggle';
+    // Chevron Right SVG
+    toggle.innerHTML = hasChildren 
+      ? `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>`
+      : ''; 
+    // If no children, keep toggle space but empty to align
+    if (!hasChildren) toggle.style.visibility = 'hidden';
+    
+    row.appendChild(toggle);
+    
+    // File/Section Icon
+    // const icon = document.createElement('span');
+    // icon.className = 'outline-icon';
+    // icon.innerHTML = '📄'; // or SVG
+    // row.appendChild(icon);
+    
+    const text = document.createElement('span');
+    text.textContent = item.title;
+    text.style.whiteSpace = 'nowrap';
+    text.style.overflow = 'hidden';
+    text.style.textOverflow = 'ellipsis';
+    text.style.flex = '1';
+    row.appendChild(text);
+    
+    // Click to navigate (text only, or whole row?)
+    // Let's make whole row clickable except toggle
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('.outline-toggle')) return; // handled by toggle
+      if (item.dest) {
+        pdfLinkService.goToDestination(item.dest);
+      }
+    });
+    
+    div.appendChild(row);
+    
+    // Children
+    if (hasChildren) {
+      const childContainer = document.createElement('div');
+      childContainer.className = 'outline-children expanded'; // Default expanded
+      renderOutlineTree(item.items, childContainer);
+      div.appendChild(childContainer);
+      
+      // Default rotated
+      toggle.classList.add('rotated');
+      
+      // Toggle logic
+      toggle.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const expanded = childContainer.classList.toggle('expanded');
+        toggle.classList.toggle('rotated', expanded);
+      });
+    }
+    
+    ul.appendChild(div);
+  });
+  
+  container.appendChild(ul);
+}
+
 function showToast(targetEl, message) {
   const toast = document.createElement('div');
   toast.className = 'floating-toast';
@@ -1015,6 +1194,36 @@ function showToast(targetEl, message) {
     setTimeout(() => toast.remove(), 200);
   }, 1500);
 }
+
+// Tab switching logic
+document.querySelectorAll('.nav-tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    // Remove active class from all tabs
+    document.querySelectorAll('.nav-tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    
+    // Add active to clicked tab
+    btn.classList.add('active');
+    const tabId = `tab-${btn.dataset.tab}`;
+    const content = document.getElementById(tabId);
+    if (content) content.classList.add('active');
+  });
+});
+
+// Tab switching logic
+document.querySelectorAll('.nav-tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    // Remove active class from all tabs
+    document.querySelectorAll('.nav-tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    
+    // Add active to clicked tab
+    btn.classList.add('active');
+    const tabId = `tab-${btn.dataset.tab}`;
+    const content = document.getElementById(tabId);
+    if (content) content.classList.add('active');
+  });
+});
 
 // Section action handlers (settings / copy / regenerate)
 document.addEventListener('click', async (e) => {
