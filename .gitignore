@@ -11,6 +11,7 @@ release/
 .parcel-cache/
 .webpack/
 coverage/
+test.txt
 
 # Logs
 *.log
