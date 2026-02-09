@@ -147,7 +147,7 @@
       }
       .outline-item {
         padding: 6px 8px; /* Increased padding slightly */
-        font-size: 14px; /* Larger font */
+        font-size: 12px; /* Uniform 12px */
         color: #334155;
         cursor: pointer;
         user-select: none; /* Prevent text selection cursor */
@@ -158,6 +158,18 @@
         display: flex; /* Flex layout */
         align-items: center;
         gap: 6px;
+      }
+      .side-nav-list li {
+        padding: 6px 8px; /* Match index padding */
+        font-size: 12px; /* Uniform 12px */
+        color: #334155;
+        border-radius: 6px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        transition: background 0.1s;
+        margin-bottom: 2px; /* Add gap between items */
       }
       .outline-item.active {
         color: #2563eb;
@@ -186,6 +198,52 @@
         margin-right: 2px;
       }
       .outline-toggle:hover { color: #475569; }
+      .side-nav-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+      }
+      .side-nav-list li {
+        padding: 8px 12px;
+        font-size: 13px;
+        color: #334155;
+        border-radius: 6px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        transition: background 0.1s;
+      }
+      .side-nav-list li:hover {
+        background: #eff6ff; /* Match index hover */
+        color: #2563eb;
+      }
+      .side-nav-list li.active {
+        background: #eff6ff !important;
+        color: #2563eb !important;
+        font-weight: 700;
+      }
+      .side-nav-list li.active span {
+        color: #2563eb !important;
+      }
+      /* Ensure hover doesn't change it (or keeps it same) */
+      .side-nav-list li.active:hover {
+        background: #eff6ff !important;
+        color: #2563eb !important;
+      }
+      .side-nav-list li span {
+        font-size: 12px; /* Force font size on children */
+      }
+      .item-action {
+        margin-left: auto; /* Push to right */
+        opacity: 0;
+        transition: opacity 0.2s;
+        display: flex;
+        align-items: center;
+      }
+      .side-nav-list li:hover .item-action {
+        opacity: 1;
+      }
       .side-nav li {
         padding: 8px 6px;
         font-size: 14px;
@@ -796,14 +854,29 @@
         display: inline-flex;
         align-items: center;
         gap: 6px;
-        padding: 6px 10px;
-        background: #eef2ff;
+        padding: 6px 10px; /* Restore padding */
+        background: #eef2ff; /* Light blue bg */
         border: 1px solid #cbd5e1;
-        border-radius: 12px;
+        border-radius: 12px; /* Rounded corners */
         font-size: 12px;
+        font-weight: normal; /* Regular weight */
         color: #1f2937;
+        height: auto; /* Let content dictate height */
+        box-shadow: none;
         cursor: pointer;
         transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+      }
+      .openai-chip .status-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        background: #22c55e;
+        box-shadow: 0 0 0 2px rgba(34,197,94,0.15);
+      }
+      .openai-chip:hover {
+        background: #e0e7ff;
+        border-color: #a5b4fc;
+        box-shadow: 0 6px 14px rgba(59, 130, 246, 0.18);
       }
       .openai-chip .status-dot {
         width: 10px;
@@ -913,6 +986,13 @@
         display: block;
         opacity: 1;
       }
+      .spin {
+        animation: spin 1s linear infinite;
+      }
+      @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
     </style>
   </head>
   <body>
@@ -922,13 +1002,13 @@
         
         <div class="side-nav-tabs">
           <button class="nav-tab-btn active" data-tab="index" title="목차">
-            <img src="../src/index.png" width="16" height="16" alt="Index" />
+            <img src="../src/images/index.png" width="16" height="16" alt="Index" />
           </button>
           <button class="nav-tab-btn" data-tab="favorite" title="즐겨찾기">
-            <img src="../src/favorite.png" width="16" height="16" alt="Favorite" />
+            <img src="../src/images/favorite.png" width="16" height="16" alt="Favorite" />
           </button>
           <button class="nav-tab-btn" data-tab="history" title="히스토리">
-            <img src="../src/history.png" width="16" height="16" alt="History" />
+            <img src="../src/images/history.png" width="16" height="16" alt="History" />
           </button>
         </div>
 
@@ -951,7 +1031,7 @@
           <div class="tab-header">
             <span class="tab-count" id="hist-count">0개</span>
             <button class="tab-action-btn" title="전체 삭제">
-              <img src="../src/recycle-bin.png" width="12" height="12" alt="clear" />
+              <img src="../src/images/recycle-bin.png" width="12" height="12" alt="clear" />
             </button>
           </div>
           <div class="info-text" style="text-align:center; padding-top:20px; font-size:12px;">히스토리가 없습니다.</div>
@@ -997,12 +1077,17 @@
       <section class="summary-pane">
         <div class="summary-scroll-content">
           <div style="display:flex; align-items:center; justify-content:flex-end; gap:8px; margin-bottom:12px;">
+            <!-- Regenerate All Button -->
+            <div class="openai-chip" id="regen-all-btn" style="display:none; padding:0; width:26px; height:26px; justify-content:center; border-radius:12px;">
+              <img src="../src/images/regenerate.png" width="12" height="12" alt="regen" style="opacity:0.7;" />
+            </div>
+
             <div class="alert-pill" id="alert-pill"><span class="alert-dot"></span><span id="alert-text">OK</span></div>
             
             <!-- Global Model Selector -->
             <div style="position:relative;">
               <div class="openai-chip" id="model-selector" style="cursor:pointer;">
-                <img src="../src/openai.png" alt="openai" width="12" height="12" />
+                <img src="../src/images/openai.png" alt="openai" width="12" height="12" />
                 <span id="current-model-name">gpt-5.1-codex</span>
                 <span style="font-size:10px; margin-left:2px;">▼</span>
               </div>
@@ -1025,9 +1110,9 @@
             <h4>
               키워드
               <span class="section-actions">
-                <button class="section-btn" title="프롬프트 위치: src/llm/prompts.json" data-section="keywords" data-action="settings"><img src="../src/settings.png" alt="settings" width="13" height="13" /></button>
-                <button class="section-btn" title="복사" data-section="keywords" data-action="copy"><img src="../src/copy.png" alt="copy" width="12" height="12" /></button>
-                <button class="section-btn" title="다시 생성" data-section="keywords" data-action="regen"><img src="../src/regenerate.png" alt="regenerate" width="12" height="12" /></button>
+                <button class="section-btn" title="프롬프트 위치: src/llm/prompts.json" data-section="keywords" data-action="settings"><img src="../src/images/settings.png" alt="settings" width="13" height="13" /></button>
+                <button class="section-btn" title="복사" data-section="keywords" data-action="copy"><img src="../src/images/copy.png" alt="copy" width="12" height="12" /></button>
+                <button class="section-btn" title="다시 생성" data-section="keywords" data-action="regen"><img src="../src/images/regenerate.png" alt="regenerate" width="12" height="12" /></button>
               </span>
             </h4>
             <div id="keywords-body" class="muted info-text"></div>
@@ -1037,9 +1122,9 @@
             <h4>
               3줄 요약
               <span class="section-actions">
-                <button class="section-btn" title="프롬프트 위치: src/llm/prompts.json" data-section="brief" data-action="settings"><img src="../src/settings.png" alt="settings" width="13" height="13" /></button>
-                <button class="section-btn" title="복사" data-section="brief" data-action="copy"><img src="../src/copy.png" alt="copy" width="12" height="12" /></button>
-                <button class="section-btn" title="다시 생성" data-section="brief" data-action="regen"><img src="../src/regenerate.png" alt="regenerate" width="12" height="12" /></button>
+                <button class="section-btn" title="프롬프트 위치: src/llm/prompts.json" data-section="brief" data-action="settings"><img src="../src/images/settings.png" alt="settings" width="13" height="13" /></button>
+                <button class="section-btn" title="복사" data-section="brief" data-action="copy"><img src="../src/images/copy.png" alt="copy" width="12" height="12" /></button>
+                <button class="section-btn" title="다시 생성" data-section="brief" data-action="regen"><img src="../src/images/regenerate.png" alt="regenerate" width="12" height="12" /></button>
               </span>
             </h4>
             <ol id="brief-list" class="muted info-text"></ol>
@@ -1049,9 +1134,9 @@
             <h4>
               요약
               <span class="section-actions">
-                <button class="section-btn" title="프롬프트 위치: src/llm/prompts.json" data-section="summary" data-action="settings"><img src="../src/settings.png" alt="settings" width="13" height="13" /></button>
-                <button class="section-btn" title="복사" data-section="summary" data-action="copy"><img src="../src/copy.png" alt="copy" width="12" height="12" /></button>
-                <button class="section-btn" title="다시 생성" data-section="summary" data-action="regen"><img src="../src/regenerate.png" alt="regenerate" width="12" height="12" /></button>
+                <button class="section-btn" title="프롬프트 위치: src/llm/prompts.json" data-section="summary" data-action="settings"><img src="../src/images/settings.png" alt="settings" width="13" height="13" /></button>
+                <button class="section-btn" title="복사" data-section="summary" data-action="copy"><img src="../src/images/copy.png" alt="copy" width="12" height="12" /></button>
+                <button class="section-btn" title="다시 생성" data-section="summary" data-action="regen"><img src="../src/images/regenerate.png" alt="regenerate" width="12" height="12" /></button>
               </span>
             </h4>
             <div id="summary-body" class="muted info-text"></div>
@@ -1061,8 +1146,8 @@
             <h4>
               Chat
               <span class="section-actions">
-                <button class="section-btn" title="복사" data-section="chat" data-action="copy"><img src="../src/copy.png" alt="copy" width="12" height="12" /></button>
-                <button class="section-btn" title="대화 지우기" data-section="chat" data-action="clear"><img src="../src/recycle-bin.png" alt="clear" width="13" height="13" /></button>
+                <button class="section-btn" title="복사" data-section="chat" data-action="copy"><img src="../src/images/copy.png" alt="copy" width="12" height="12" /></button>
+                <button class="section-btn" title="대화 지우기" data-section="chat" data-action="clear"><img src="../src/images/recycle-bin.png" alt="clear" width="13" height="13" /></button>
               </span>
             </h4>
             <div id="chat-history" class="muted info-text" style="display:none;">

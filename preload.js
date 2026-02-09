@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('sunshadeAPI', {
   openaiAuthStatus: () => ipcRenderer.invoke('auth:openai:status'),
@@ -53,5 +53,8 @@ contextBridge.exposeInMainWorld('sunshadeAPI', {
   loadPrompts: () => ipcRenderer.invoke('prompts:getCombined'),
   loadCustomPrompts: () => ipcRenderer.invoke('prompts:get'),
   savePrompts: (data) => ipcRenderer.invoke('prompts:save', data),
-  openSettings: () => ipcRenderer.send('window:settings:open')
+  openSettings: () => ipcRenderer.send('window:settings:open'),
+  readFile: (path) => ipcRenderer.invoke('file:read', path),
+  getPathForFile: (file) => webUtils.getPathForFile(file),
+  openFileDialog: () => ipcRenderer.invoke('dialog:open')
 });

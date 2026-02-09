@@ -37,7 +37,7 @@ const keywordsBody = document.getElementById('keywords-body');
 const briefList = document.getElementById('brief-list');
 const summaryBody = document.getElementById('summary-body');
 const tooltipPortal = document.getElementById('tooltip-portal');
-const outlineView = document.getElementById('outline-view');
+const regenAllBtn = document.getElementById('regen-all-btn'); // Add reference
 let promptsCache = null;
 let pinnedChip = null;
 let lastExtractedText = '';
@@ -49,6 +49,7 @@ let lastKeywordsList = [];
 
 // State
 let pdfDoc = null;
+let currentPdfPath = null; // Track current file path for favorites
 const eventBus = new EventBus();
 const pdfLinkService = new PDFLinkService({ eventBus });
 const pdfViewer = new PDFViewer({
@@ -58,6 +59,104 @@ const pdfViewer = new PDFViewer({
   textLayerMode: 2, // Enable text selection
 });
 pdfLinkService.setViewer(pdfViewer);
+
+// --- DocManager: History & Favorites & Cache ---
+const DocManager = {
+  key: 'sunshade-docs',
+  
+  getAll() {
+    try {
+      const raw = localStorage.getItem(this.key);
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  },
+  
+  saveAll(docs) {
+    try {
+      localStorage.setItem(this.key, JSON.stringify(docs));
+      console.log('Docs saved. Count:', Object.keys(docs).length);
+    } catch (e) {
+      console.error('Failed to save docs:', e);
+    }
+  },
+  
+  get(path) {
+    const docs = this.getAll();
+    return docs[path] || null;
+  },
+  
+  save(path, data) {
+    const docs = this.getAll();
+    docs[path] = {
+      ...docs[path],
+      ...data,
+      path, // ensure path
+      lastOpened: Date.now()
+    };
+    this.saveAll(docs);
+    this.notifyUpdate();
+  },
+  
+  toggleFavorite(path) {
+    const docs = this.getAll();
+    if (docs[path]) {
+      docs[path].isFavorite = !docs[path].isFavorite;
+      this.saveAll(docs);
+      this.notifyUpdate();
+      return docs[path].isFavorite;
+    }
+    return false;
+  },
+  
+  delete(path) {
+    const docs = this.getAll();
+    if (docs[path]) {
+      delete docs[path];
+      this.saveAll(docs);
+      this.notifyUpdate();
+      console.log('Deleted doc:', path);
+    } else {
+      console.warn('Doc not found to delete:', path);
+    }
+  },
+  
+  clearHistory() {
+    const docs = this.getAll();
+    let changed = false;
+    let count = 0;
+    Object.keys(docs).forEach(path => {
+      if (!docs[path].isFavorite) {
+        delete docs[path];
+        changed = true;
+        count++;
+      }
+    });
+    if (changed) {
+      this.saveAll(docs);
+      this.notifyUpdate();
+      console.log(`Cleared ${count} history items`);
+    } else {
+      console.log('No history items to clear');
+    }
+  },
+  
+  getList(filterType) { // 'all' (history) or 'favorite'
+    const docs = this.getAll();
+    let list = Object.values(docs);
+    if (filterType === 'favorite') {
+      list = list.filter(d => d.isFavorite);
+    }
+    // Sort by lastOpened desc
+    return list.sort((a, b) => (b.lastOpened || 0) - (a.lastOpened || 0));
+  },
+  
+  notifyUpdate() {
+    // Dispatch custom event for UI update
+    window.dispatchEvent(new CustomEvent('doc-update'));
+  }
+};
 
 // Sync page number
 eventBus.on('pagesinit', () => {
@@ -213,28 +312,156 @@ openaiChip?.addEventListener('click', async () => {
 refreshOpenAIStatus().catch((err) => console.error('OpenAI status error', err));
 
 // PDF render helpers
-async function loadPdf(file) {
+async function loadPdf(input) {
+  if (!input) return;
   if (!pdfjsLib || !viewerContainer) {
     logMessage('PDF engine not ready', 'warn');
     return;
   }
+  
+  let arrayBuffer;
+  let filePath = '';
+  let fileName = '';
+  
   try {
-    const arrayBuffer = await file.arrayBuffer();
+    if (typeof input === 'string') {
+      // Path based load (from history)
+      filePath = input;
+      fileName = input.split(/[/\\]/).pop();
+      const buffer = await window.sunshadeAPI.readFile(filePath);
+      arrayBuffer = buffer.buffer; 
+    } else {
+      // File object load (drag drop / open)
+      // Use webUtils via preload to get real path
+      try {
+        filePath = window.sunshadeAPI.getPathForFile(input);
+      } catch (e) {
+        console.warn('Failed to get file path:', e);
+        filePath = input.path || ''; // Fallback
+      }
+      
+      fileName = input.name;
+      
+      // Fallback if path is empty
+      if (!filePath) {
+        console.warn('File path missing, using name as ID');
+        filePath = fileName; 
+      }
+      
+      arrayBuffer = await input.arrayBuffer();
+    }
+    
+    console.log('Loading PDF from:', filePath); // Debug log
+    currentPdfPath = filePath; // Update global state
+
     const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
     pdfDoc = await loadingTask.promise;
     
     pdfViewer.setDocument(pdfDoc);
     pdfLinkService.setDocument(pdfDoc, null);
     
-    document.querySelector('.pdf-pane').classList.add('has-pdf'); // Dark bg
+    document.querySelector('.pdf-pane').classList.add('has-pdf');
     
     // Load Outline
     loadOutline(pdfDoc);
 
     togglePdfPlaceholder(false); 
-    updateSummaryPlaceholders(true); 
-    await generateSummaries();
-    console.log(`Loaded PDF: ${file.name} (${pdfDoc.numPages} pages)`);
+    
+    // Reset Scroll
+    const scrollContent = document.querySelector('.summary-scroll-content');
+    if (scrollContent) scrollContent.scrollTop = 0;
+    
+    // Reset Chat UI first
+    if (chatHistory) {
+      chatHistory.innerHTML = '';
+      chatHistory.style.display = 'none';
+    }
+    if (chatEmpty) chatEmpty.style.display = 'block';
+    
+    // Update Sidebar highlight
+    renderSidebar();
+
+    // --- Cache Logic ---
+    const cached = DocManager.get(filePath);
+    if (cached && cached.analysis) {
+      console.log('Restoring from cache:', filePath);
+      
+      // Restore text & analysis
+      lastExtractedText = cached.extractedText || '';
+      
+      // Check if analysis is actually populated
+      const hasKeywords = !!cached.analysis.keywords;
+      const hasBrief = !!cached.analysis.brief;
+      const hasSummary = !!cached.analysis.summary;
+      
+      if (!hasKeywords && !hasBrief && !hasSummary) {
+        // If analysis exists but empty, maybe it was interrupted
+        console.warn('Cached analysis is empty, regenerating...');
+        updateSummaryPlaceholders(true);
+        await generateSummaries();
+      } else {
+        // Restore UI content
+        if (regenAllBtn) regenAllBtn.style.display = 'flex'; // Show regen button on restore
+        // Keywords
+        if (hasKeywords) {
+          lastKeywordsRaw = cached.analysis.keywords;
+          renderKeywords(lastKeywordsRaw);
+        }
+        // Brief
+        if (hasBrief) {
+          lastBriefRaw = cached.analysis.brief;
+          const lines = parseBriefLines(lastBriefRaw).slice(0, 3);
+          lastBriefLines = lines;
+          briefList.innerHTML = '';
+          lines.forEach((line) => {
+            const li = document.createElement('li');
+            li.textContent = normalizeLine(line.replace(/^\d+[\).\s-]*/, ''));
+            briefList.appendChild(li);
+          });
+          briefList.classList.remove('placeholder');
+        }
+        // Summary
+        if (hasSummary) {
+          lastSummaryRaw = cached.analysis.summary;
+          summaryBody.innerHTML = renderMarkdownToHtml(lastSummaryRaw);
+          summaryBody.classList.remove('placeholder');
+          summaryBody.classList.remove('info-text');
+        }
+        
+        // Remove placeholders manually since we filled content
+        if (hasKeywords) keywordsBody.classList.remove('placeholder');
+
+        // Restore Chat History
+        if (cached.chatHistory && cached.chatHistory.length > 0) {
+          if (chatEmpty) chatEmpty.style.display = 'none';
+          if (chatHistory) {
+            chatHistory.style.display = 'block';
+            chatHistory.innerHTML = '';
+            cached.chatHistory.forEach(item => {
+              // Use shared helper
+              const q = item.q.replace(/^Q: /, '');
+              const { item: el } = createChatElement(q, item.a);
+              chatHistory.appendChild(el);
+            });
+            // Don't auto-scroll on restore
+          }
+        }
+      }
+      
+    } else {
+      // New file
+      updateSummaryPlaceholders(true); 
+      await generateSummaries();
+      
+      // Save after generation is handled in generateSummaries
+      // But we need to save basic info first
+      DocManager.save(filePath, {
+        name: fileName,
+        extractedText: lastExtractedText // Will be updated
+      });
+    }
+    
+    console.log(`Loaded PDF: ${fileName} (${pdfDoc.numPages} pages)`);
   } catch (err) {
     logMessage(`PDF load failed: ${err.message}`, 'error');
   }
@@ -279,7 +506,8 @@ function wirePdfInput() {
       }
     });
     el?.addEventListener('click', () => {
-      if (!pdfDoc) pdfFileInput?.click();
+      // Use open button logic
+      if (!pdfDoc) pdfOpenBtn.click();
     });
   });
 }
@@ -289,7 +517,18 @@ async function scrollToPage(targetPage) {
 }
 
 // Toolbar wiring
-pdfOpenBtn?.addEventListener('click', () => pdfFileInput.click());
+pdfOpenBtn?.addEventListener('click', async () => {
+  try {
+    const path = await window.sunshadeAPI.openFileDialog();
+    if (path) {
+      loadPdf(path);
+    }
+  } catch (err) {
+    console.error('File open failed', err);
+  }
+});
+// pdfFileInput listener removed/ignored since we use native dialog
+/*
 pdfFileInput?.addEventListener('change', () => {
   const file = pdfFileInput.files?.[0];
   if (file) {
@@ -297,6 +536,7 @@ pdfFileInput?.addEventListener('change', () => {
     pdfFileInput.value = '';
   }
 });
+*/
 let isPageWidthFit = false;
 
 // Button actions delegated to pdfViewer
@@ -445,6 +685,11 @@ async function runChat(question) {
           onChunk: (chunk) => {
             accumulated += chunk;
             answerBody.innerHTML = renderMarkdownToHtml(accumulated);
+            // Scroll parent container to bottom
+            const scrollContent = document.querySelector('.summary-scroll-content');
+            if (scrollContent) {
+                scrollContent.scrollTop = scrollContent.scrollHeight;
+            }
           },
           onDone: () => resolve(),
           onError: (err) => reject(err)
@@ -453,6 +698,19 @@ async function runChat(question) {
       );
     });
     setAlert(null);
+    
+    // Save chat history after done
+    if (currentPdfPath) {
+      // Get current chat history
+      const history = [];
+      document.querySelectorAll('.chat-item').forEach(item => {
+        const q = item.querySelector('.chat-q')?.textContent;
+        const a = item.querySelector('.chat-a')?.innerHTML; // Save HTML for markdown
+        if (q && a) history.push({ q, a });
+      });
+      DocManager.save(currentPdfPath, { chatHistory: history });
+    }
+    
   } catch (err) {
     const msg = err?.message || '알 수 없는 오류';
     const quota = msg.includes('insufficient_quota') || msg.includes('429');
@@ -468,16 +726,10 @@ async function runChat(question) {
   }
 }
 
-function appendChatItem(question) {
-  if (!chatHistory) return null;
-  
-  // Hide empty placeholder
-  if (chatEmpty) chatEmpty.style.display = 'none';
-  chatHistory.style.display = 'block';
-  chatHistory.classList.remove('placeholder');
-
+function createChatElement(question, answer = '') {
   const item = document.createElement('div');
   item.className = 'chat-item';
+  item.style.position = 'relative';
   
   const qEl = document.createElement('div');
   qEl.className = 'chat-q';
@@ -485,17 +737,101 @@ function appendChatItem(question) {
   
   const aEl = document.createElement('div');
   aEl.className = 'chat-a';
-  aEl.textContent = ''; // Will be filled by stream
+  aEl.innerHTML = answer; // Use innerHTML for markdown
+  
+  // Delete button
+  const delBtn = document.createElement('img');
+  delBtn.src = '../src/images/recycle-bin.png';
+  delBtn.className = 'chat-del-btn';
+  delBtn.style.position = 'absolute';
+  delBtn.style.top = '10px';
+  delBtn.style.right = '10px';
+  delBtn.style.width = '14px';
+  delBtn.style.height = '14px';
+  delBtn.style.cursor = 'pointer';
+  delBtn.style.opacity = '0';
+  delBtn.style.transition = 'opacity 0.2s';
+  delBtn.title = '이 대화 삭제';
+  
+  // Hover logic
+  item.addEventListener('mouseenter', () => delBtn.style.opacity = '0.5');
+  item.addEventListener('mouseleave', () => delBtn.style.opacity = '0');
+  delBtn.addEventListener('mouseenter', () => delBtn.style.opacity = '1');
+  
+  delBtn.addEventListener('click', () => {
+    // Save position before removal
+    const rect = delBtn.getBoundingClientRect();
+    
+    // No confirm, immediate delete
+    item.remove();
+    saveChatHistory(); // Sync
+    
+    // Check if empty
+    const historyContainer = document.getElementById('chat-history');
+    const emptyContainer = document.getElementById('chat-empty');
+    if (historyContainer && historyContainer.children.length === 0) {
+        if (emptyContainer) emptyContainer.style.display = 'block';
+    }
+    
+    // Show toast below the main clear button (consistent position)
+    const clearBtn = document.querySelector('#card-chat .section-btn[data-action="clear"]');
+    showToast(clearBtn || document.body, 'Deleted');
+  });
   
   item.appendChild(qEl);
   item.appendChild(aEl);
+  item.appendChild(delBtn);
+  
+  return { item, aEl };
+}
+
+function appendChatItem(question) {
+  if (!chatHistory) return null;
+  
+  if (chatEmpty) chatEmpty.style.display = 'none';
+  chatHistory.style.display = 'block';
+  chatHistory.classList.remove('placeholder');
+
+  const { item, aEl } = createChatElement(question, '');
   
   chatHistory.appendChild(item);
   
-  // Auto scroll to bottom
-  item.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  // Auto scroll parent to bottom
+  const scrollContent = document.querySelector('.summary-scroll-content');
+  if (scrollContent) {
+      scrollContent.scrollTo({ top: scrollContent.scrollHeight, behavior: 'smooth' });
+  }
   
   return aEl;
+}
+
+// Regenerate All Handler
+regenAllBtn?.addEventListener('click', async () => {
+  if (!lastExtractedText) {
+    showToast(regenAllBtn, 'Load PDF first');
+    return;
+  }
+  // Immediate regen without confirm
+  promptsCache = null;
+  updateSummaryPlaceholders(true);
+  regenAllBtn.style.display = 'none'; // Hide while generating
+  await generateSummaries();
+});
+
+// Helper to sync chat history
+function saveChatHistory() {
+  if (!currentPdfPath) return;
+  const history = [];
+  document.querySelectorAll('.chat-item').forEach(item => {
+    const q = item.querySelector('.chat-q')?.textContent;
+    const a = item.querySelector('.chat-a')?.innerHTML;
+    if (q && a) history.push({ q, a });
+  });
+  const doc = DocManager.get(currentPdfPath);
+  if (doc) {
+    doc.chatHistory = history;
+    DocManager.save(currentPdfPath, { chatHistory: history });
+  }
 }
 
 function renderError(message) {
@@ -519,6 +855,7 @@ function updateSummaryPlaceholders(hasPdf) {
     el.textContent = text;
   };
   if (!hasPdf) {
+    if (regenAllBtn) regenAllBtn.style.display = 'none'; // Hide if no PDF
     setInfo(keywordsBody, '파일을 선택하면 키워드가 표시됩니다.');
     if (briefList) {
       briefList.classList.add('info-text');
@@ -853,6 +1190,17 @@ async function generateSummaries() {
     if (!text) return;
     lastExtractedText = text;
     
+    // Debug: save extracted text
+    // window.sunshadeAPI.saveDebugText(text).catch(err => console.warn('Debug save failed', err));
+
+    // Mark as analyzing
+    DocManager.save(currentPdfPath, { 
+      name: pdfFileInput.files?.[0]?.name || currentPdfPath.split(/[/\\]/).pop(), 
+      isAnalyzing: true 
+    });
+
+    const tasks = [];
+
     // keywords
     if (keywordsBody) {
       keywordsBody.textContent = '생성 중...';
@@ -862,7 +1210,7 @@ async function generateSummaries() {
       const systemPrompt = prompts.system || 'You are Sunshade.';
       const taskPrompt = prompts.sections?.keywords || 'Extract keywords.';
       
-      runStreamTask(
+      tasks.push(runStreamTask(
         [
           { role: 'user', content: `${taskPrompt}\n\n${text}` }
         ],
@@ -878,7 +1226,7 @@ async function generateSummaries() {
       ).catch(err => {
          keywordsBody.textContent = '오류 발생';
          console.error(err);
-      });
+      }));
     }
 
   // 3줄 요약
@@ -890,7 +1238,7 @@ async function generateSummaries() {
     const systemPrompt = prompts.system || 'You are Sunshade.';
     const taskPrompt = prompts.sections?.brief || 'Give 3 bullet sentences.';
 
-    runStreamTask(
+    tasks.push(runStreamTask(
       [
         { role: 'user', content: `${taskPrompt}\n\n${text}` }
       ],
@@ -927,7 +1275,7 @@ async function generateSummaries() {
           });
         }
       }
-    ).catch(err => console.error(err));
+    ).catch(err => console.error(err)));
   }
 
     // 요약
@@ -941,7 +1289,7 @@ async function generateSummaries() {
       const systemPrompt = prompts.system || 'You are Sunshade.';
       const taskPrompt = prompts.sections?.summary || 'Summarize.';
 
-      runStreamTask(
+      tasks.push(runStreamTask(
         [
           { role: 'user', content: `${taskPrompt}\n\n${text}` }
         ],
@@ -962,11 +1310,28 @@ async function generateSummaries() {
       ).catch(err => {
          summaryBody.textContent = '오류 발생';
          console.error(err);
-      });
+      }));
     }
+    
+    // Save when all done
+    Promise.allSettled(tasks).then(() => {
+      DocManager.save(currentPdfPath, {
+        extractedText: text,
+        isAnalyzing: false,
+        analysis: {
+          keywords: lastKeywordsRaw,
+          brief: lastBriefRaw,
+          summary: lastSummaryRaw
+        }
+      });
+      console.log('Analysis saved to history');
+      if (regenAllBtn) regenAllBtn.style.display = 'flex'; // Show regen button
+    });
+
   } catch (err) {
     console.error('generateSummaries error', err);
     setAlert(`요약 생성 실패: ${err.message}`, 'error');
+    DocManager.save(currentPdfPath, { isAnalyzing: false }); // Stop loading
   }
 }
 
@@ -1172,13 +1537,22 @@ function renderOutlineTree(items, container) {
   container.appendChild(ul);
 }
 
-function showToast(targetEl, message) {
+function showToast(target, message) {
   const toast = document.createElement('div');
   toast.className = 'floating-toast';
   toast.textContent = message;
   document.body.appendChild(toast);
 
-  const rect = targetEl.getBoundingClientRect();
+  let rect;
+  if (target && typeof target.getBoundingClientRect === 'function') {
+    rect = target.getBoundingClientRect();
+  } else if (target && typeof target.left === 'number') {
+    rect = target; // Use passed coordinates
+  } else {
+    // Fallback to center
+    rect = { left: window.innerWidth / 2, width: 0, bottom: window.innerHeight / 2 };
+  }
+
   toast.style.left = `${rect.left + rect.width / 2}px`;
   toast.style.top = `${rect.bottom + 8}px`;
   toast.style.transform = 'translate(-50%, 4px)';
@@ -1270,6 +1644,7 @@ document.addEventListener('click', async (e) => {
     if (section === 'chat' && action === 'clear') {
         if (chatHistory) chatHistory.innerHTML = '';
         if (chatEmpty) chatEmpty.style.display = 'block';
+        saveChatHistory(); // Sync clear
         showToast(btn, 'Cleared');
         return;
     }
@@ -1293,6 +1668,12 @@ document.addEventListener('click', async (e) => {
           () => {
             lastKeywordsRaw = rawAcc;
             renderKeywords(lastKeywordsRaw);
+            // Update cache
+            const doc = DocManager.get(currentPdfPath);
+            if (doc) {
+                doc.analysis.keywords = lastKeywordsRaw;
+                DocManager.save(currentPdfPath, { analysis: doc.analysis });
+            }
           }
         );
       } else if (section === 'brief') {
@@ -1320,6 +1701,12 @@ document.addEventListener('click', async (e) => {
             lastBriefRaw = rawAcc;
              const lines = parseBriefLines(lastBriefRaw).slice(0, 3);
              lastBriefLines = lines;
+             // Update cache
+             const doc = DocManager.get(currentPdfPath);
+             if (doc) {
+                 doc.analysis.brief = lastBriefRaw;
+                 DocManager.save(currentPdfPath, { analysis: doc.analysis });
+             }
           }
         );
       } else if (section === 'summary') {
@@ -1340,6 +1727,12 @@ document.addEventListener('click', async (e) => {
           () => {
             lastSummaryRaw = dedupeSummary(rawAcc);
             summaryBody.innerHTML = renderMarkdownToHtml(lastSummaryRaw);
+            // Update cache
+            const doc = DocManager.get(currentPdfPath);
+            if (doc) {
+                doc.analysis.summary = lastSummaryRaw;
+                DocManager.save(currentPdfPath, { analysis: doc.analysis });
+            }
           }
         );
       }
@@ -1414,3 +1807,237 @@ setupResizer(resizerRight, 'right');
 updatePdfControls();
 togglePdfPlaceholder(true);
 updateSummaryPlaceholders(false); // Init placeholders
+
+// Sidebar render helpers
+function renderSidebar() {
+  renderHistoryList();
+  renderFavoriteList();
+  updateTabCounts();
+  updateFavoriteButtonState();
+}
+
+function updateFavoriteButtonState() {
+  const btn = document.querySelector('#tab-favorite .tab-action-btn');
+  if (!btn) return;
+  
+  let isFav = false;
+  if (currentPdfPath) {
+    const doc = DocManager.get(currentPdfPath);
+    if (doc && doc.isFavorite) isFav = true;
+  }
+  
+  if (isFav) {
+    btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line></svg>`;
+    btn.title = '즐겨찾기 해제';
+  } else {
+    btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>`;
+    btn.title = '추가';
+  }
+}
+
+function renderHistoryList() {
+  const historyView = document.getElementById('tab-history');
+  if (!historyView) return;
+  
+  const info = historyView.querySelector('.info-text');
+  const existingList = historyView.querySelector('.side-nav-list');
+  if (existingList) existingList.remove();
+  
+  const list = DocManager.getList('all');
+  if (list.length === 0) {
+    if (info) info.style.display = 'block';
+    return;
+  }
+  
+  if (info) info.style.display = 'none';
+  
+  const ul = document.createElement('ul');
+  ul.className = 'side-nav-list';
+  ul.style.marginTop = '0';
+  
+  list.forEach(doc => {
+    const li = document.createElement('li');
+    li.title = doc.path;
+    
+    // Name
+    const name = document.createElement('span');
+    name.textContent = doc.name;
+    name.style.flex = '1';
+    name.style.overflow = 'hidden';
+    name.style.textOverflow = 'ellipsis';
+    name.style.whiteSpace = 'nowrap';
+    
+    // Actions container
+    const actions = document.createElement('div');
+    actions.className = 'item-action';
+    actions.style.display = 'flex';
+    actions.style.alignItems = 'center';
+    actions.style.gap = '4px';
+    
+    // Favorite btn
+    const favBtn = document.createElement('img');
+    favBtn.src = doc.isFavorite ? '../src/images/favorite-2.png' : '../src/images/favorite.png';
+    favBtn.width = 14;
+    favBtn.height = 14;
+    favBtn.style.cursor = 'pointer';
+    favBtn.style.opacity = '0.6';
+    favBtn.title = '즐겨찾기 토글';
+    
+    favBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      DocManager.toggleFavorite(doc.path);
+    });
+    
+    // Delete btn (Trash icon)
+    const delBtn = document.createElement('img');
+    delBtn.src = '../src/images/recycle-bin.png';
+    delBtn.width = 14;
+    delBtn.height = 14;
+    delBtn.style.opacity = '0.6';
+    delBtn.style.cursor = 'pointer';
+    delBtn.title = '삭제';
+    
+    delBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (confirm('삭제하시겠습니까?')) {
+        DocManager.delete(doc.path);
+      }
+    });
+    
+    actions.appendChild(favBtn);
+    actions.appendChild(delBtn);
+    
+    li.appendChild(name);
+    li.appendChild(actions);
+    
+    // Highlight current
+    if (currentPdfPath && doc.path === currentPdfPath) {
+        li.classList.add('active');
+    }
+    
+    li.addEventListener('click', () => {
+      loadPdf(doc.path);
+    });
+    
+    ul.appendChild(li);
+  });
+  
+  historyView.appendChild(ul);
+}
+
+function renderFavoriteList() {
+  const favView = document.getElementById('tab-favorite');
+  if (!favView) return;
+  
+  const info = favView.querySelector('.info-text');
+  const existingList = favView.querySelector('.side-nav-list');
+  if (existingList) existingList.remove();
+  
+  const list = DocManager.getList('favorite');
+  if (list.length === 0) {
+    if (info) info.style.display = 'block';
+    return;
+  }
+  
+  if (info) info.style.display = 'none';
+  
+  const ul = document.createElement('ul');
+  ul.className = 'side-nav-list';
+  ul.style.marginTop = '0';
+  
+  list.forEach(doc => {
+    const li = document.createElement('li');
+    li.title = doc.path;
+    
+    const name = document.createElement('span');
+    name.textContent = doc.name;
+    name.style.flex = '1';
+    name.style.overflow = 'hidden';
+    name.style.textOverflow = 'ellipsis';
+    name.style.whiteSpace = 'nowrap';
+    
+    // Actions container
+    const actions = document.createElement('div');
+    actions.className = 'item-action';
+    actions.style.display = 'flex';
+    actions.style.alignItems = 'center';
+    actions.style.gap = '4px';
+    
+    // Favorite btn (Always active)
+    const favBtn = document.createElement('img');
+    favBtn.src = '../src/images/favorite-2.png';
+    favBtn.width = 14;
+    favBtn.height = 14;
+    favBtn.style.cursor = 'pointer';
+    favBtn.style.opacity = '0.8';
+    favBtn.title = '즐겨찾기 해제';
+    
+    favBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      DocManager.toggleFavorite(doc.path);
+    });
+    
+    actions.appendChild(favBtn);
+    
+    li.appendChild(name);
+    li.appendChild(actions);
+    
+    // Highlight current
+    if (currentPdfPath && doc.path === currentPdfPath) {
+        li.classList.add('active');
+    }
+    
+    li.addEventListener('click', () => {
+      loadPdf(doc.path);
+    });
+    
+    ul.appendChild(li);
+  });
+  
+  favView.appendChild(ul);
+}
+
+function updateTabCounts() {
+  const histCount = document.getElementById('hist-count');
+  const favCount = document.getElementById('fav-count');
+  
+  if (histCount) {
+    const total = DocManager.getList('all').length;
+    histCount.textContent = `${total}개`;
+  }
+  
+  if (favCount) {
+    const total = DocManager.getList('favorite').length;
+    favCount.textContent = `${total}개`;
+  }
+}
+
+window.addEventListener('doc-update', () => {
+  renderSidebar();
+});
+
+renderSidebar();
+
+document.addEventListener('click', async (e) => {
+  const btn = e.target.closest('.tab-action-btn');
+  if (!btn) return;
+  
+  if (btn.title === '전체 삭제') {
+    if (confirm('히스토리를 전체 삭제하시겠습니까? (즐겨찾기는 유지됩니다)')) {
+      DocManager.clearHistory();
+    }
+    return;
+  }
+  
+  if (btn.title === '추가') {
+    if (!currentPdfPath) {
+      showToast(btn, 'PDF를 먼저 열어주세요');
+      return;
+    }
+    const isFav = DocManager.toggleFavorite(currentPdfPath);
+    // showToast(btn, isFav ? '즐겨찾기 추가됨' : '즐겨찾기 해제됨'); // Toast handled by toggle logic? No.
+    // Update button state immediately
+    updateFavoriteButtonState();
+    return;
+  }
+});
