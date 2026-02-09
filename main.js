@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -165,6 +165,24 @@ ipcMain.handle('prompts:getCombined', () => {
     // Fallback to base or empty
     return {};
   }
+});
+
+ipcMain.handle('file:read', (_event, filePath) => {
+  try {
+    return fs.readFileSync(filePath);
+  } catch (err) {
+    console.error(`Failed to read file: ${filePath}`, err);
+    throw err;
+  }
+});
+
+ipcMain.handle('dialog:open', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog({
+    properties: ['openFile'],
+    filters: [{ name: 'PDF Files', extensions: ['pdf'] }]
+  });
+  if (canceled) return null;
+  return filePaths[0];
 });
 
 let settingsWin = null;
