@@ -84,11 +84,116 @@
         font-weight: 600;
       }
       .pdf-pane {
-        background: #525659; /* PDF Viewer gray */
+        background: #f8fafc;
         position: relative;
         padding: 0;
         height: 100vh;
-        overflow: hidden; /* Let viewerContainer handle scroll */
+        overflow: hidden;
+        display: flex; /* Change to flex column */
+        flex-direction: column;
+      }
+      .pdf-pane.has-pdf {
+        background: #525659;
+      }
+      .pdf-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        background: #fff;
+        border-bottom: 1px solid #e5e7eb;
+        padding: 0 8px;
+        margin-bottom: 0;
+        position: relative;
+        z-index: 2;
+        height: 30px !important; /* Perfect slim height */
+        min-height: 30px !important;
+        flex-shrink: 0;
+        border-radius: 0;
+        overflow: hidden;
+      }
+      .pdf-toolbar button {
+        padding: 0 6px; /* Reduced vertical padding */
+        height: 20px; /* Reduced height */
+        line-height: 20px; /* Center text vertically */
+        font-size: 11px !important; 
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 4px;
+        background: transparent;
+        border: 1px solid transparent;
+        cursor: pointer;
+        color: #334155;
+      }
+      .pdf-toolbar button:hover {
+        background: #f1f5f9;
+        border-color: #e2e8f0;
+      }
+      .pdf-toolbar button.active {
+        background: #e0e7ff !important;
+        color: #4338ca !important;
+        border-color: #c7d2fe !important;
+        font-weight: 600;
+      }
+      .pdf-toolbar button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      .pdf-toolbar input, #pdf-zoom-level {
+        height: 20px !important;
+        line-height: 20px !important;
+        font-size: 11px !important;
+        margin: 0;
+        padding: 0;
+        border: 1px solid transparent;
+      }
+      .pdf-toolbar input, #pdf-zoom-level {
+        height: 22px !important;
+        line-height: 22px !important;
+        font-size: 11px !important;
+        margin: 0;
+        padding: 0;
+        border: 1px solid transparent;
+      }
+      /* Ensure toolbar center is positioned relative to slim height */
+      .toolbar-center {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        z-index: 0;
+      }
+      #pdf-page-display {
+        padding: 0 4px;
+        font-weight: 600;
+        color: #111827;
+        min-width: 40px; /* Reduced min-width */
+        text-align: center;
+        font-size: 11px !important;
+        display: inline-flex; /* Use flex for centering */
+        justify-content: center;
+        align-items: center;
+        height: 20px; /* Match button height */
+      }
+      #pdf-open, #pdf-fit {
+        font-size: 11px !important;
+      }
+      .viewer-wrapper {
+        flex: 1;
+        position: relative;
+        overflow: hidden;
+        width: 100%;
+      }
+      #viewerContainer {
+        overflow: auto;
+        position: absolute; /* Restore absolute for PDFViewer requirement */
+        width: 100%;
+        height: 100%;
+        top: 0;
+        left: 0;
+      }
+      .pdf-pane.has-pdf {
+        background: #525659; /* Switch to gray when PDF loaded */
       }
       #viewerContainer {
         overflow: auto;
@@ -101,6 +206,7 @@
       .pdf-toolbar {
         display: flex;
         align-items: center;
+        /* justify-content: space-between; Removed to use absolute centering */
         gap: 6px;
         background: #fff;
         border: 1px solid #e5e7eb;
@@ -110,6 +216,39 @@
         position: sticky;
         top: 0;
         z-index: 2;
+        height: 46px; /* Fixed height for consistency */
+      }
+      .toolbar-group {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        z-index: 1; /* Ensure clicks */
+      }
+      .toolbar-group.right {
+        margin-left: auto; /* Push to right */
+      }
+      .toolbar-center {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        z-index: 0;
+      }
+      #pdf-open, #pdf-fit, #pdf-page-display, #pdf-zoom-level, .pdf-toolbar button {
+        font-size: 11px !important; /* Uniform small font */
+      }
+      #pdf-zoom-level {
+        font-weight: 600;
+        color: #4b5563;
+        width: 42px;
+        text-align: center;
+        border: 1px solid transparent;
+        border-radius: 4px;
+        background: transparent;
+        padding: 2px 0;
+      }
+      #pdf-fit {
+        font-size: 11px; /* Smaller font */
       }
       .pdf-toolbar button {
         border: 1px solid #e2e8f0;
@@ -126,13 +265,32 @@
         opacity: 0.5;
         cursor: not-allowed;
       }
-      .pdf-toolbar .spacer { flex: 1; }
-      #pdf-page-display {
-        padding: 0 10px;
+      #pdf-zoom-level {
+        font-size: 12px;
         font-weight: 600;
-        color: #111827;
-        min-width: 70px;
+        color: #4b5563;
+        width: 48px;
         text-align: center;
+        border: 1px solid transparent;
+        border-radius: 4px;
+        background: transparent;
+        padding: 2px 0;
+      }
+      #pdf-zoom-level:focus {
+        border-color: #3b82f6;
+        background: #fff;
+        outline: none;
+      }
+      /* Remove spinner buttons from number input */
+      #pdf-zoom-level::-webkit-inner-spin-button,
+      #pdf-zoom-level::-webkit-outer-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
+      }
+      .page-controls {
+        display: flex;
+        align-items: center;
+        gap: 6px;
       }
       .pdf-doc {
         background: #fff;
@@ -182,18 +340,22 @@
         text-shadow: 0 0 0 #111827; /* make selectable text visible */
       }
       .pdf-empty {
-        flex: 1;
-        min-height: 160px;
         display: flex;
         align-items: center;
         justify-content: center;
-        border: 1px dashed #cbd5e1;
-        border-radius: 8px;
-        color: #4b5563;
-        background: rgba(255, 255, 255, 0.6);
-        font-weight: 500;
-        font-size: 12px;
-        cursor: pointer;
+        color: #9ca3af;
+        font-size: 13px;
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        z-index: 1; /* Below toolbar */
+        pointer-events: none; /* Let drops pass through if needed, but we want click */
+      }
+      /* Clickable empty state needs pointer events */
+      .pdf-empty {
+        pointer-events: auto;
       }
       .pdf-footer {
         color: #111827;
@@ -655,18 +817,31 @@
 
       <section class="pdf-pane">
         <div class="pdf-toolbar">
-          <button id="pdf-prev">◀</button>
-          <span id="pdf-page-display">- / -</span>
-          <button id="pdf-next">▶</button>
-          <div class="spacer"></div>
-          <button id="pdf-zoom-out">-</button>
-          <button id="pdf-zoom-in">+</button>
-          <button id="pdf-fit">맞춤</button>
+          <div class="toolbar-group">
+            <button id="pdf-open" style="width:auto; padding:0 12px;">열기</button>
+          </div>
+          
+          <div class="toolbar-center">
+            <div class="page-controls">
+              <button id="pdf-prev">◀</button>
+              <span id="pdf-page-display">- / -</span>
+              <button id="pdf-next">▶</button>
+            </div>
+          </div>
+
+          <div class="toolbar-group right">
+            <button id="pdf-zoom-out">-</button>
+            <input id="pdf-zoom-level" value="100%" />
+            <button id="pdf-zoom-in">+</button>
+            <button id="pdf-fit">맞춤</button>
+          </div>
           <input type="file" id="pdf-file-input" accept="application/pdf" style="display:none" />
         </div>
         
-        <div id="viewerContainer">
-          <div id="viewer" class="pdfViewer"></div>
+        <div class="viewer-wrapper">
+          <div id="viewerContainer">
+            <div id="viewer" class="pdfViewer"></div>
+          </div>
         </div>
         
         <div class="pdf-empty" id="pdf-empty">파일을 선택하면 페이지가 표시됩니다.</div>

@@ -18,10 +18,12 @@ const openaiChipText = document.getElementById('openai-chip-text');
 const openaiStatusDot = document.getElementById('openai-dot');
 const openaiChip = document.getElementById('openai-chip');
 const alertPill = document.getElementById('alert-pill');
+const pdfOpenBtn = document.getElementById('pdf-open');
 const pdfPrevBtn = document.getElementById('pdf-prev');
 const pdfNextBtn = document.getElementById('pdf-next');
 const pdfZoomInBtn = document.getElementById('pdf-zoom-in');
 const pdfZoomOutBtn = document.getElementById('pdf-zoom-out');
+const pdfZoomLevel = document.getElementById('pdf-zoom-level');
 const pdfFitBtn = document.getElementById('pdf-fit');
 const pdfPageDisplay = document.getElementById('pdf-page-display');
 const pdfFileInput = document.getElementById('pdf-file-input');
@@ -59,12 +61,30 @@ pdfLinkService.setViewer(pdfViewer);
 // Sync page number
 eventBus.on('pagesinit', () => {
   pdfViewer.currentScaleValue = 'auto'; 
+  updatePdfControls(); // Update UI immediately after init
+});
+eventBus.on('pagechanging', (evt) => {
+  const page = evt.pageNumber;
+  const num = pdfViewer.pagesCount;
+  if (pdfPageDisplay) pdfPageDisplay.textContent = `${page} / ${num}`;
+  updatePdfControls(); // Ensure controls are updated
+});
+eventBus.on('scalechanging', (evt) => {
+  if (pdfZoomLevel && document.activeElement !== pdfZoomLevel) {
+    pdfZoomLevel.value = `${Math.round(evt.scale * 100)}%`;
+  }
 });
 eventBus.on('pagechanging', (evt) => {
   const page = evt.pageNumber;
   const num = pdfViewer.pagesCount;
   if (pdfPageDisplay) pdfPageDisplay.textContent = `${page} / ${num}`;
   updatePdfControls();
+});
+
+eventBus.on('scalechanging', (evt) => {
+  if (pdfZoomLevel) {
+    pdfZoomLevel.textContent = `${Math.round(evt.scale * 100)}%`;
+  }
 });
 
 // Default chip state
@@ -204,6 +224,7 @@ async function loadPdf(file) {
     pdfViewer.setDocument(pdfDoc);
     pdfLinkService.setDocument(pdfDoc, null);
     
+    document.querySelector('.pdf-pane').classList.add('has-pdf'); // Dark bg
     togglePdfPlaceholder(false); 
     updateSummaryPlaceholders(true); 
     await generateSummaries();
@@ -262,6 +283,7 @@ async function scrollToPage(targetPage) {
 }
 
 // Toolbar wiring
+pdfOpenBtn?.addEventListener('click', () => pdfFileInput.click());
 pdfFileInput?.addEventListener('change', () => {
   const file = pdfFileInput.files?.[0];
   if (file) {
@@ -269,20 +291,58 @@ pdfFileInput?.addEventListener('change', () => {
     pdfFileInput.value = '';
   }
 });
-pdfPrevBtn?.addEventListener('click', async () => {
+let isPageWidthFit = false;
+
+// Button actions delegated to pdfViewer
+pdfPrevBtn?.addEventListener('click', () => {
   pdfViewer.currentPageNumber--;
 });
-pdfNextBtn?.addEventListener('click', async () => {
+pdfNextBtn?.addEventListener('click', () => {
   pdfViewer.currentPageNumber++;
 });
-pdfZoomInBtn?.addEventListener('click', async () => {
+pdfZoomInBtn?.addEventListener('click', () => {
   pdfViewer.currentScale += 0.1;
+  isPageWidthFit = false;
+  pdfFitBtn.classList.remove('active');
 });
-pdfZoomOutBtn?.addEventListener('click', async () => {
+pdfZoomOutBtn?.addEventListener('click', () => {
   pdfViewer.currentScale -= 0.1;
+  isPageWidthFit = false;
+  pdfFitBtn.classList.remove('active');
 });
-pdfFitBtn?.addEventListener('click', async () => {
-  pdfViewer.currentScaleValue = 'page-fit';
+pdfFitBtn?.addEventListener('click', () => {
+  if (isPageWidthFit) {
+    isPageWidthFit = false;
+    pdfFitBtn.classList.remove('active');
+  } else {
+    isPageWidthFit = true;
+    pdfFitBtn.classList.add('active');
+    pdfViewer.currentScaleValue = 'page-width';
+  }
+});
+
+// Auto-fit on resize
+const resizeObserver = new ResizeObserver(() => {
+  if (isPageWidthFit && pdfDoc) {
+    pdfViewer.currentScaleValue = 'page-width';
+  }
+});
+if (viewerContainer) resizeObserver.observe(viewerContainer);
+
+// Manual zoom input
+pdfZoomLevel?.addEventListener('change', () => {
+  const val = parseInt(pdfZoomLevel.value, 10);
+  if (!isNaN(val) && val > 0) {
+    pdfViewer.currentScaleValue = val / 100;
+  } else {
+    // Reset to current if invalid
+    pdfZoomLevel.value = `${Math.round(pdfViewer.currentScale * 100)}%`;
+  }
+});
+pdfZoomLevel?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    pdfZoomLevel.blur(); // Trigger change
+  }
 });
 
 // Ask button placeholder
@@ -562,13 +622,19 @@ function formatBriefForCopy() {
 function parseBriefLines(raw) {
   if (!raw) return [];
   let cleaned = sanitizeText(raw).replace(/\r/g, '');
-  // 이모지 앞에서 분리 (변형 선택자 포함)
-  const parts = cleaned
-    .split(/(?=[🤖🧠🛠️🚀🌎🧑‍💻📈💡🧭🏁🎯🔧⚙️📌📍])/u)
-    .map((l) => l.trim())
-    .filter(Boolean);
-  const merged = mergeEmojiSingles(parts).map(normalizeLine).filter(Boolean);
-  return dedupeLines(merged);
+  
+  // Insert newline before emojis if missing
+  // Using Unicode property escapes for emojis
+  try {
+    cleaned = cleaned.replace(/([^\n])\s*(?=\p{Extended_Pictographic})/gu, '$1\n');
+  } catch (e) {
+    // Fallback if regex fails (older browsers)
+    cleaned = cleaned.replace(/([^\n])\s*(?=[🤖🧠🛠️🚀🌎🧑‍💻📈💡🧭🏁🎯🔧⚙️📌📍])/gu, '$1\n');
+  }
+
+  // Split by newline
+  const lines = cleaned.split('\n').map(l => l.trim()).filter(Boolean);
+  return dedupeLines(lines);
 }
 
 function sanitizeText(text) {
