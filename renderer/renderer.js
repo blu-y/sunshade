@@ -37,6 +37,7 @@ const keywordsBody = document.getElementById('keywords-body');
 const briefList = document.getElementById('brief-list');
 const summaryBody = document.getElementById('summary-body');
 const tooltipPortal = document.getElementById('tooltip-portal');
+const outlineView = document.getElementById('outline-view'); // Add reference
 const regenAllBtn = document.getElementById('regen-all-btn'); // Add reference
 let promptsCache = null;
 let pinnedChip = null;
