@@ -58,13 +58,7 @@
     "electron-builder": "^26.7.0"
   },
   "dependencies": {
-<<<<<<< HEAD
     "katex": "^0.16.9",
-=======
-    "electron": "^35.7.5",
-    "katex": "^0.16.9",
-    "marked": "^11.1.1",
->>>>>>> bb0383d2844a6f3c542aa9fa1c14528db4abd009
     "keytar": "^7.9.0",
     "marked": "^11.1.1",
     "pdfjs-dist": "^4.8.69"
