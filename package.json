@@ -1,16 +1,66 @@
 {
   "name": "sunshade",
+  "productName": "Sunshade",
   "version": "0.1.0",
-  "description": "Sunshade: desktop AI paper analysis tool (Electron skeleton)",
+  "description": "Sunshade: AI paper analysis tool",
+  "author": "Neoul <neoul.ro@gmail.com>",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "postinstall": "electron-builder install-app-deps",
+    "build": "electron-builder",
+    "build:mac": "electron-builder --mac",
+    "build:win": "electron-builder --win",
+    "build:linux": "electron-builder --linux",
+    "build:all": "electron-builder -mwl"
+  },
+  "build": {
+    "appId": "com.sunshade.app",
+    "productName": "Sunshade",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "**/*",
+      "src/**/*",
+      "renderer/**/*",
+      "!dist/*",
+      "!**/*.ts",
+      "!**/*.map"
+    ],
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.productivity",
+      "icon": "src/icon.png"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "src/icon.png"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "src/icon.png",
+      "category": "Office"
+    }
+  },
+  "devDependencies": {
+    "electron": "^35.7.5",
+    "electron-builder": "^26.7.0"
   },
   "dependencies": {
-    "electron": "^35.7.5",
     "katex": "^0.16.9",
-    "marked": "^11.1.1",
     "keytar": "^7.9.0",
+    "marked": "^11.1.1",
     "pdfjs-dist": "^4.8.69"
   }
 }

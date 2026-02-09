@@ -113,9 +113,12 @@ ipcMain.on('chat:openai:stream:start', async (event, { messages, instructions, s
 // Load custom prompts for settings UI
 ipcMain.handle('prompts:get', () => {
   try {
-    const p = path.join(__dirname, 'src', 'llm', 'custom_prompts.json');
-    if (!fs.existsSync(p)) return {};
-    const raw = fs.readFileSync(p, 'utf-8');
+    const customP = path.join(app.getPath('userData'), 'custom_prompts.json');
+    if (!fs.existsSync(customP)) {
+        // Return default empty structure if file doesn't exist
+        return { system: "", sections: { keywords: "", brief: "", summary: "" } };
+    }
+    const raw = fs.readFileSync(customP, 'utf-8');
     return JSON.parse(raw);
   } catch (err) {
     console.error('Failed to load custom_prompts.json', err);
@@ -126,8 +129,8 @@ ipcMain.handle('prompts:get', () => {
 // Save custom prompts
 ipcMain.handle('prompts:save', (_event, data) => {
   try {
-    const p = path.join(__dirname, 'src', 'llm', 'custom_prompts.json');
-    fs.writeFileSync(p, JSON.stringify(data, null, 2), 'utf-8');
+    const customP = path.join(app.getPath('userData'), 'custom_prompts.json');
+    fs.writeFileSync(customP, JSON.stringify(data, null, 2), 'utf-8');
     return true;
   } catch (err) {
     console.error('Failed to save custom_prompts.json', err);
@@ -139,12 +142,17 @@ ipcMain.handle('prompts:save', (_event, data) => {
 ipcMain.handle('prompts:getCombined', () => {
   try {
     const baseP = path.join(__dirname, 'src', 'llm', 'prompts.json');
-    const customP = path.join(__dirname, 'src', 'llm', 'custom_prompts.json');
+    const customP = path.join(app.getPath('userData'), 'custom_prompts.json');
     
     const base = JSON.parse(fs.readFileSync(baseP, 'utf-8'));
     let custom = {};
+    
     if (fs.existsSync(customP)) {
-      custom = JSON.parse(fs.readFileSync(customP, 'utf-8'));
+      try {
+        custom = JSON.parse(fs.readFileSync(customP, 'utf-8'));
+      } catch (e) {
+        console.warn('Failed to parse custom prompts', e);
+      }
     }
 
     const combine = (b, c) => {
