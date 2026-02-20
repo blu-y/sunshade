@@ -55,6 +55,9 @@ contextBridge.exposeInMainWorld('sunshadeAPI', {
   savePrompts: (data) => ipcRenderer.invoke('prompts:save', data),
   openSettings: () => ipcRenderer.send('window:settings:open'),
   readFile: (path) => ipcRenderer.invoke('file:read', path),
+  readCachedPdf: (path) => ipcRenderer.invoke('pdf:cache:read', path),
+  writeCachedPdf: (path, data) =>
+    ipcRenderer.invoke('pdf:cache:write', { pdfPath: path, data }),
   getPathForFile: (file) => webUtils.getPathForFile(file),
   openFileDialog: () => ipcRenderer.invoke('dialog:open')
 });

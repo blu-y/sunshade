@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 
 const {
   signInWithOpenAI,
@@ -42,6 +43,15 @@ function saveWindowState(bounds) {
   } catch (err) {
     console.error('Failed to save window state', err);
   }
+}
+
+function getPdfCachePath(pdfPath) {
+  const hash = crypto.createHash('sha256').update(pdfPath).digest('hex');
+  const cacheDir = path.join(app.getPath('userData'), 'pdf-cache');
+  if (!fs.existsSync(cacheDir)) {
+    fs.mkdirSync(cacheDir, { recursive: true });
+  }
+  return path.join(cacheDir, `${hash}.pdf`);
 }
 
 function createWindow() {
@@ -181,6 +191,31 @@ ipcMain.handle('file:read', (_event, filePath) => {
   } catch (err) {
     console.error(`Failed to read file: ${filePath}`, err);
     throw err;
+  }
+});
+
+ipcMain.handle('pdf:cache:read', (_event, pdfPath) => {
+  if (!pdfPath) return null;
+  try {
+    const cachePath = getPdfCachePath(pdfPath);
+    if (!fs.existsSync(cachePath)) return null;
+    return fs.readFileSync(cachePath);
+  } catch (err) {
+    console.error(`Failed to read cached PDF: ${pdfPath}`, err);
+    return null;
+  }
+});
+
+ipcMain.handle('pdf:cache:write', (_event, { pdfPath, data }) => {
+  if (!pdfPath || !data) return false;
+  try {
+    const cachePath = getPdfCachePath(pdfPath);
+    const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
+    fs.writeFileSync(cachePath, buffer);
+    return true;
+  } catch (err) {
+    console.error(`Failed to write cached PDF: ${pdfPath}`, err);
+    return false;
   }
 });
 

@@ -9,6 +9,7 @@
       rel="stylesheet"
     />
     <link rel="stylesheet" href="pdf_viewer.css">
+    <link rel="stylesheet" href="sunshade_overrides.css">
     <link rel="stylesheet" href="../node_modules/katex/dist/katex.min.css" />
     <style>
       button, input, select, textarea {
@@ -300,6 +301,23 @@
         background: #f1f5f9;
         border-color: #e2e8f0;
       }
+      .pdf-toolbar .icon-btn {
+        width: 22px;
+        padding: 0;
+      }
+      .pdf-toolbar .icon-btn img {
+        display: block;
+      }
+
+      #highlightParamsToolbarContainer {
+        display: inline-flex;
+        align-items: center;
+        flex-direction: row;
+        padding-block-end: 0 !important;
+        height: 32px; /* Match toolbar height */
+      }
+
+
       .pdf-toolbar button.active {
         background: #e0e7ff !important;
         color: #4338ca !important;
@@ -920,32 +938,6 @@
         box-shadow: 0 0 0 2px rgba(239,68,68,0.15);
       }
       .has-tooltip { position: relative; }
-      .has-tooltip::after {
-        content: attr(data-tooltip);
-        position: absolute;
-        top: calc(100% + 10px);
-        right: 0;
-        background: #0f172a;
-        color: #f8fafc;
-        padding: 8px 10px;
-        border-radius: 10px;
-        font-size: 11px;
-        line-height: 1.5;
-        max-width: 240px;
-        min-width: 140px;
-        white-space: normal;
-        opacity: 0;
-        transform: translateY(6px);
-        pointer-events: none;
-        box-shadow: 0 14px 32px rgba(0, 0, 0, 0.28);
-        transition: opacity 0.14s ease, transform 0.14s ease;
-        z-index: 6;
-        text-align: left;
-      }
-      .has-tooltip:hover::after {
-        opacity: 1;
-        transform: translateY(0);
-      }
       .floating-toast {
         position: fixed;
         background: #334155;
@@ -1055,6 +1047,9 @@
           </div>
 
           <div class="toolbar-group right">
+            <button id="pdf-highlight" class="icon-btn" title="하이라이트">
+              <img src="../src/images/marker.png" alt="highlight" width="14" height="14" />
+            </button>
             <button id="pdf-zoom-out">-</button>
             <input id="pdf-zoom-level" value="100%" />
             <button id="pdf-zoom-in">+</button>

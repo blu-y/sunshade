@@ -12,6 +12,7 @@ release/
 .webpack/
 coverage/
 test.txt
+debug/
 
 # Logs
 *.log

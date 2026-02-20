@@ -29,6 +29,7 @@ const pdfZoomInBtn = document.getElementById("pdf-zoom-in");
 const pdfZoomOutBtn = document.getElementById("pdf-zoom-out");
 const pdfZoomLevel = document.getElementById("pdf-zoom-level");
 const pdfFitBtn = document.getElementById("pdf-fit");
+const pdfHighlightBtn = document.getElementById("pdf-highlight");
 const pdfPageDisplay = document.getElementById("pdf-page-display");
 const pdfFileInput = document.getElementById("pdf-file-input");
 // const pdfFooterEl = document.getElementById('pdf-footer'); // Removed
@@ -51,6 +52,9 @@ let lastBriefRaw = "";
 let lastSummaryRaw = "";
 let lastBriefLines = [];
 let lastKeywordsList = [];
+let pendingHighlightDefaultColor = null;
+let isApplyingHighlightDefault = false;
+let isHighlightModeEnabled = false;
 
 // State
 let pdfDoc = null;
@@ -61,9 +65,12 @@ const pdfViewer = new PDFViewer({
   container: viewerContainer,
   eventBus: eventBus,
   linkService: pdfLinkService,
-  textLayerMode: 2, // Enable text selection
+  textLayerMode: 2,
+  annotationEditorHighlightColors: "yellow=#FFFF98,green=#53FFBC,blue=#80EBFF,pink=#FFCBE6,red=#FF4F5F",
 });
 pdfLinkService.setViewer(pdfViewer);
+const highlightModeValue = pdfjsLib.AnnotationEditorType?.HIGHLIGHT ?? 9;
+const noEditorModeValue = pdfjsLib.AnnotationEditorType?.NONE ?? 0;
 
 // --- DocManager: History & Favorites & Cache ---
 const DocManager = {
@@ -164,6 +171,88 @@ const DocManager = {
   },
 };
 
+function saveHighlights() {
+  if (!pdfDoc || !currentPdfPath) return;
+  try {
+    const highlights = [];
+    const storage = pdfDoc.annotationStorage;
+    if (storage && storage.size > 0) {
+      const { map } = storage.serializable;
+      if (map && map.size > 0) {
+        for (const [key, val] of map) {
+          if (val.annotationType === pdfjsLib.AnnotationEditorType.HIGHLIGHT) {
+            const { outlines, ...rest } = val;
+            // Convert Float32Array quadPoints to plain Array for JSON serialization
+            // (JSON.stringify(Float32Array) produces {"0":...} instead of [...])
+            if (rest.quadPoints && !(rest.quadPoints instanceof Array)) {
+              rest.quadPoints = Array.from(rest.quadPoints);
+            }
+            highlights.push({ ...rest, id: undefined, storageKey: key });
+          }
+        }
+      }
+    }
+    DocManager.save(currentPdfPath, { highlights });
+  } catch (e) {
+    console.warn("Failed to save highlights:", e);
+  }
+}
+
+async function restoreHighlights() {
+  if (!pdfDoc || !currentPdfPath) return;
+  const cached = DocManager.get(currentPdfPath);
+  if (!cached?.highlights?.length) return;
+
+  const uiManager = pdfViewer._layerProperties?.annotationEditorUIManager;
+  if (!uiManager) return;
+
+  const byPage = new Map();
+  for (const h of cached.highlights) {
+    const pi = h.pageIndex;
+    if (!byPage.has(pi)) byPage.set(pi, []);
+    byPage.get(pi).push(h);
+  }
+
+  const restoredPages = new Set();
+
+  async function restorePage(pageIndex) {
+    if (restoredPages.has(pageIndex)) return;
+    const items = byPage.get(pageIndex);
+    if (!items) return;
+    const layer = uiManager.getLayer(pageIndex);
+    if (!layer) return;
+    restoredPages.add(pageIndex);
+    for (const data of items) {
+      try {
+        const editor = await layer.deserialize(data);
+        if (editor) {
+          layer.addOrRebuild(editor);
+          uiManager.addToAnnotationStorage(editor);
+        }
+      } catch (e) {
+        console.warn(`Failed to restore highlight on page ${pageIndex}:`, e);
+      }
+    }
+  }
+
+  for (const pageIndex of byPage.keys()) {
+    await restorePage(pageIndex);
+  }
+
+  // Pages not yet rendered won't have layers — restore lazily as they appear
+  if (restoredPages.size < byPage.size) {
+    const onLayerRendered = async (evt) => {
+      const pageIndex = evt.pageNumber - 1;
+      if (!byPage.has(pageIndex) || restoredPages.has(pageIndex)) return;
+      await restorePage(pageIndex);
+      if (restoredPages.size >= byPage.size) {
+        eventBus.off("annotationeditorlayerrendered", onLayerRendered);
+      }
+    };
+    eventBus.on("annotationeditorlayerrendered", onLayerRendered);
+  }
+}
+
 // Sync page number
 eventBus.on("pagesinit", () => {
   pdfViewer.currentScaleValue = "auto";
@@ -191,6 +280,126 @@ eventBus.on("pagechanging", (evt) => {
 eventBus.on("scalechanging", (evt) => {
   if (pdfZoomLevel) {
     pdfZoomLevel.textContent = `${Math.round(evt.scale * 100)}%`;
+  }
+});
+
+eventBus.on("annotationeditoruimanager", () => {
+  if (!pendingHighlightDefaultColor) return;
+  eventBus.dispatch("switchannotationeditorparams", {
+    source: "sunshade",
+    type: pdfjsLib.AnnotationEditorParamsType.HIGHLIGHT_DEFAULT_COLOR,
+    value: pendingHighlightDefaultColor,
+  });
+  pendingHighlightDefaultColor = null;
+});
+
+eventBus.on("switchannotationeditorparams", (evt) => {
+  if (!evt || !currentPdfPath) return;
+  const isHighlightColor =
+    evt.type === pdfjsLib.AnnotationEditorParamsType.HIGHLIGHT_COLOR;
+  const isDefaultColor =
+    evt.type === pdfjsLib.AnnotationEditorParamsType.HIGHLIGHT_DEFAULT_COLOR;
+  if (!isHighlightColor && !isDefaultColor) return;
+  if (!evt.value) return;
+  DocManager.save(currentPdfPath, { highlightDefaultColor: evt.value });
+  if (isHighlightColor && !isApplyingHighlightDefault) {
+    isApplyingHighlightDefault = true;
+    eventBus.dispatch("switchannotationeditorparams", {
+      source: "sunshade",
+      type: pdfjsLib.AnnotationEditorParamsType.HIGHLIGHT_DEFAULT_COLOR,
+      value: evt.value,
+    });
+    isApplyingHighlightDefault = false;
+  }
+});
+
+let editToolbarObserver = null;
+
+function normalizeEditToolbar(toolbar) {
+  if (!toolbar) return;
+  if (toolbar.classList.contains('editorParamsToolbar')) return;
+  toolbar.remove();
+}
+
+function normalizeAllEditToolbars() {
+  // Look for any editToolbar, not just in annotationEditorLayer
+  // Sometimes it might be appended elsewhere
+  const toolbars = document.querySelectorAll(".editToolbar");
+  for (const toolbar of toolbars) {
+    normalizeEditToolbar(toolbar);
+  }
+}
+
+function setupEditToolbarObserver() {
+  if (!viewerContainer || editToolbarObserver) return;
+  
+  // 1. General observer for the viewer container
+  editToolbarObserver = new MutationObserver((mutations) => {
+    let shouldNormalize = false;
+    for (const mutation of mutations) {
+      if (mutation.addedNodes.length) {
+        shouldNormalize = true;
+        break;
+      }
+      // Also check for attribute changes on toolbars (like style or hidden)
+      if (mutation.type === 'attributes' && 
+          (mutation.target.classList.contains('editToolbar') || 
+           mutation.target.closest('.editToolbar'))) {
+        shouldNormalize = true;
+        break;
+      }
+    }
+    if (shouldNormalize) {
+      normalizeAllEditToolbars();
+    }
+  });
+  
+  editToolbarObserver.observe(viewerContainer, {
+    childList: true,
+    subtree: true,
+    attributes: true, // Watch for attribute changes too
+    attributeFilter: ['style', 'class', 'hidden'] // Only relevant attributes
+  });
+
+  // 2. Specific observer for the annotation layer if it exists (or when it's created)
+  // This is a backup to catch things that might happen deep in the structure
+  const observerConfig = { childList: true, subtree: true };
+  
+  // Watch for the creation of the annotation layer itself
+  const layerObserver = new MutationObserver(() => {
+    const layer = viewerContainer.querySelector('.annotationEditorLayer');
+    if (layer && !layer.dataset.observed) {
+      layer.dataset.observed = "true";
+      // Create a specific observer for the layer
+      const toolbarObserver = new MutationObserver(() => normalizeAllEditToolbars());
+      toolbarObserver.observe(layer, { childList: true, subtree: true });
+    }
+    normalizeAllEditToolbars();
+  });
+  
+  layerObserver.observe(viewerContainer, { childList: true, subtree: true });
+
+  normalizeAllEditToolbars();
+}
+
+setupEditToolbarObserver();
+
+function applyHighlightMode(enabled) {
+  const mode = enabled ? highlightModeValue : noEditorModeValue;
+  try {
+    pdfViewer.annotationEditorMode = { mode };
+  } catch {}
+  isHighlightModeEnabled = enabled;
+  if (pdfHighlightBtn) {
+    pdfHighlightBtn.classList.toggle("active", enabled);
+  }
+}
+
+eventBus.on("annotationeditormodechanged", (evt) => {
+  const enabled = evt?.mode === highlightModeValue;
+  isHighlightModeEnabled = enabled;
+  if (pdfHighlightBtn) {
+    pdfHighlightBtn.classList.toggle("active", enabled);
   }
 });
 
@@ -327,6 +536,8 @@ async function loadPdf(input) {
     return;
   }
 
+  saveHighlights();
+
   let arrayBuffer;
   let filePath = "";
   let fileName = "";
@@ -361,12 +572,21 @@ async function loadPdf(input) {
 
     console.log("Loading PDF from:", filePath); // Debug log
     currentPdfPath = filePath; // Update global state
+    const cachedDoc = DocManager.get(filePath);
+    pendingHighlightDefaultColor = cachedDoc?.highlightDefaultColor || null;
 
     const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
     pdfDoc = await loadingTask.promise;
 
     pdfViewer.setDocument(pdfDoc);
     pdfLinkService.setDocument(pdfDoc, null);
+    applyHighlightMode(false);
+
+    let saveDebounceTimer = null;
+    pdfDoc.annotationStorage.onSetModified = () => {
+      clearTimeout(saveDebounceTimer);
+      saveDebounceTimer = setTimeout(() => saveHighlights(), 500);
+    };
 
     document.querySelector(".pdf-pane").classList.add("has-pdf");
 
@@ -390,7 +610,7 @@ async function loadPdf(input) {
     renderSidebar();
 
     // --- Cache Logic ---
-    const cached = DocManager.get(filePath);
+    const cached = cachedDoc;
     if (cached && cached.analysis) {
       console.log("Restoring from cache:", filePath);
 
@@ -469,6 +689,11 @@ async function loadPdf(input) {
     }
 
     console.log(`Loaded PDF: ${fileName} (${pdfDoc.numPages} pages)`);
+
+    eventBus.on("pagesloaded", async function onPagesLoaded() {
+      eventBus.off("pagesloaded", onPagesLoaded);
+      await restoreHighlights();
+    });
   } catch (err) {
     logMessage(`PDF load failed: ${err.message}`, "error");
   }
@@ -485,7 +710,14 @@ function updatePdfControls() {
   }
 
   const disabled = !num;
-  [pdfPrevBtn, pdfNextBtn, pdfZoomInBtn, pdfZoomOutBtn, pdfFitBtn].forEach(
+  [
+    pdfPrevBtn,
+    pdfNextBtn,
+    pdfZoomInBtn,
+    pdfZoomOutBtn,
+    pdfFitBtn,
+    pdfHighlightBtn,
+  ].forEach(
     (btn) => {
       if (btn) btn.disabled = disabled;
     },
@@ -564,6 +796,10 @@ pdfZoomOutBtn?.addEventListener("click", () => {
   pdfViewer.currentScale -= 0.1;
   isPageWidthFit = false;
   pdfFitBtn.classList.remove("active");
+});
+pdfHighlightBtn?.addEventListener("click", () => {
+  if (!pdfDoc) return;
+  applyHighlightMode(!isHighlightModeEnabled);
 });
 pdfFitBtn?.addEventListener("click", () => {
   if (isPageWidthFit) {
@@ -1154,6 +1390,30 @@ function showTooltip(chip) {
   tooltipPortal.style.left = `${left}px`;
 }
 
+function showPortalTooltip(el) {
+  if (!el || !el.dataset.tooltip || !tooltipPortal) return;
+
+  tooltipPortal.textContent = el.dataset.tooltip;
+  tooltipPortal.classList.add("show");
+  const rect = el.getBoundingClientRect();
+
+  // Position below the element, aligned to right edge
+  let top = rect.bottom + 10;
+  let left = rect.right - tooltipPortal.offsetWidth;
+
+  // Boundary check
+  if (left < 10) left = 10;
+  if (left + tooltipPortal.offsetWidth > window.innerWidth - 10) {
+    left = window.innerWidth - tooltipPortal.offsetWidth - 10;
+  }
+  if (top + tooltipPortal.offsetHeight > window.innerHeight - 10) {
+    top = rect.top - tooltipPortal.offsetHeight - 10;
+  }
+
+  tooltipPortal.style.top = `${top}px`;
+  tooltipPortal.style.left = `${left}px`;
+}
+
 function hideTooltip() {
   if (tooltipPortal) {
     tooltipPortal.classList.remove("show");
@@ -1163,15 +1423,18 @@ function hideTooltip() {
 // Toggle active tooltip on click/hover for scrollable panel
 // Using portal to escape overflow:hidden
 document.addEventListener("mouseover", (e) => {
-  if (pinnedChip) return; // Don't interfere if pinned
+  if (pinnedChip) return;
   const chip = e.target.closest(".keyword-chip");
-  if (chip) showTooltip(chip);
+  if (chip) { showTooltip(chip); return; }
+  const hasTooltip = e.target.closest(".has-tooltip");
+  if (hasTooltip) showPortalTooltip(hasTooltip);
 });
 
 document.addEventListener("mouseout", (e) => {
-  if (pinnedChip) return; // Don't interfere if pinned
+  if (pinnedChip) return;
   const chip = e.target.closest(".keyword-chip");
-  if (chip) hideTooltip();
+  const hasTooltip = e.target.closest(".has-tooltip");
+  if (chip || hasTooltip) hideTooltip();
 });
 
 document.addEventListener("click", (e) => {
@@ -2104,6 +2367,10 @@ window.addEventListener("doc-update", () => {
   renderSidebar();
 });
 
+window.addEventListener("beforeunload", () => {
+  saveHighlights();
+});
+
 renderSidebar();
 
 document.addEventListener("click", async (e) => {
@@ -2129,3 +2396,45 @@ document.addEventListener("click", async (e) => {
     return;
   }
 });
+
+const toolbarObserver = new MutationObserver((mutations) => {
+  for (const mutation of mutations) {
+    for (const node of mutation.addedNodes) {
+      if (node.nodeType === Node.ELEMENT_NODE) {
+        
+        if (node.classList.contains("editToolbar")) {
+          normalizeEditToolbar(node);
+        } else if (node.querySelectorAll) {
+          const toolbars = node.querySelectorAll(".editToolbar");
+          toolbars.forEach(normalizeEditToolbar);
+        }
+
+        let foundParams = false;
+        if (node.classList.contains("editorParamsToolbar") || node.querySelector('.colorPicker')) {
+           foundParams = true;
+        } else if (node.querySelectorAll && node.querySelectorAll(".editorParamsToolbar").length > 0) {
+           foundParams = true;
+        }
+
+        if (foundParams) {
+           const editToolbars = document.querySelectorAll('.editToolbar');
+           editToolbars.forEach(normalizeEditToolbar);
+        }
+      }
+    }
+  }
+});
+
+if (document.body) {
+    toolbarObserver.observe(document.body, {
+      childList: true,
+      subtree: true,
+    });
+} else {
+    document.addEventListener('DOMContentLoaded', () => {
+        toolbarObserver.observe(document.body, {
+          childList: true,
+          subtree: true,
+        });
+    });
+}
