@@ -44,6 +44,12 @@
       ],
       "icon": "src/icon.png"
     },
+    "nsis": {
+      "artifactName": "${productName}-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "${productName}-Portable-${version}.${ext}"
+    },
     "linux": {
       "target": [
         "AppImage",
