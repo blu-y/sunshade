@@ -1,1 +1,44 @@
+[data-theme="dark"] .pdfViewer .page {
+  border-color: #334155;
+}
 
+[data-theme="dark"] #viewerContainer {
+  scrollbar-color: #475569 #1e293b;
+}
+
+[data-theme="dark"] .summary-scroll-content {
+  scrollbar-color: #475569 #0f172a;
+}
+
+[data-theme="dark"] .tab-content {
+  scrollbar-color: #475569 #0f172a;
+}
+
+[data-theme="dark"] ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+[data-theme="dark"] ::-webkit-scrollbar-track {
+  background: #1e293b;
+}
+
+[data-theme="dark"] ::-webkit-scrollbar-thumb {
+  background: #475569;
+  border-radius: 4px;
+}
+
+[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+
+[data-theme="dark"] .openai-chip img[src*="openai"] {
+  filter: invert(1);
+}
+
+[data-theme="dark"] .pdfViewer .canvasWrapper > canvas:first-child {
+  filter: invert(1) hue-rotate(180deg);
+}
+[data-theme="dark"] .pdfViewer .canvasWrapper > canvas.pdf-image-overlay {
+  filter: none;
+}
