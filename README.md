@@ -9,7 +9,7 @@
 
 ### 🚀 Quick Start
 
-[Download](https://github.com/blu-y/sunshade/releases/tag/v0.1.0)
+[Download](https://github.com/blu-y/sunshade/releases/tag/latest)
 
 ### 🛠️ Install Manually
 
