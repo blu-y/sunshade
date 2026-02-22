@@ -248,3 +248,108 @@ ipcMain.on('window:settings:open', () => {
     settingsWin = null;
   });
 });
+
+ipcMain.handle('app:get-path', () => app.getPath('userData'));
+
+ipcMain.handle('data:read-index', () => {
+  try {
+    const userDataPath = app.getPath('userData');
+    const indexPath = path.join(userDataPath, 'sunshade-index.json');
+    const docsPath = path.join(userDataPath, 'sunshade-docs.json'); // Legacy file
+    const contentDir = path.join(userDataPath, 'doc-contents');
+
+    // 1. Migration block (Old single file -> Split structure)
+    if (!fs.existsSync(indexPath) && fs.existsSync(docsPath)) {
+      console.log('Starting migration from single docs.json to split index/content structure...');
+      try {
+        const oldData = JSON.parse(fs.readFileSync(docsPath, 'utf-8'));
+        const newIndex = {};
+        
+        if (!fs.existsSync(contentDir)) {
+          fs.mkdirSync(contentDir, { recursive: true });
+        }
+
+        for (const [key, doc] of Object.entries(oldData)) {
+          // Extract heavy content
+          const { extractedText, analysis, highlights, chatHistory, ...meta } = doc;
+          
+          // Generate a safe hash for filename
+          const fileHash = crypto.createHash('sha256').update(key).digest('hex');
+          const contentFilePath = path.join(contentDir, `${fileHash}.json`);
+          
+          // Save heavy content separately
+          fs.writeFileSync(contentFilePath, JSON.stringify({ extractedText, analysis, highlights, chatHistory }, null, 2), 'utf-8');
+          
+          // Save lightweight meta to index
+          newIndex[key] = { ...meta, contentHash: fileHash };
+        }
+        
+        // Save the new index
+        fs.writeFileSync(indexPath, JSON.stringify(newIndex, null, 2), 'utf-8');
+        console.log('Migration complete. Renaming old sunshade-docs.json to .bak');
+        fs.renameSync(docsPath, `${docsPath}.bak`); // Backup old file
+
+        return JSON.stringify(newIndex);
+      } catch (err) {
+        console.error('Migration failed:', err);
+      }
+    }
+
+    // 2. Normal read flow
+    if (!fs.existsSync(indexPath)) return null;
+    return fs.readFileSync(indexPath, 'utf-8');
+  } catch (err) {
+    console.error('Failed to read index file', err);
+    return null;
+  }
+});
+
+ipcMain.handle('data:write-index', (_event, content) => {
+  try {
+    const indexPath = path.join(app.getPath('userData'), 'sunshade-index.json');
+    fs.writeFileSync(indexPath, content, 'utf-8');
+    return true;
+  } catch (err) {
+    console.error('Failed to write index file', err);
+    throw err;
+  }
+});
+
+ipcMain.handle('data:read-content', (_event, hash) => {
+  try {
+    const contentPath = path.join(app.getPath('userData'), 'doc-contents', `${hash}.json`);
+    if (!fs.existsSync(contentPath)) return null;
+    return fs.readFileSync(contentPath, 'utf-8');
+  } catch (err) {
+    console.error(`Failed to read content file [${hash}]`, err);
+    return null;
+  }
+});
+
+ipcMain.handle('data:write-content', (_event, hash, content) => {
+  try {
+    const contentDir = path.join(app.getPath('userData'), 'doc-contents');
+    if (!fs.existsSync(contentDir)) {
+      fs.mkdirSync(contentDir, { recursive: true });
+    }
+    const contentPath = path.join(contentDir, `${hash}.json`);
+    fs.writeFileSync(contentPath, content, 'utf-8');
+    return true;
+  } catch (err) {
+    console.error(`Failed to write content file [${hash}]`, err);
+    throw err;
+  }
+});
+
+ipcMain.handle('data:delete-content', (_event, hash) => {
+   try {
+     const contentPath = path.join(app.getPath('userData'), 'doc-contents', `${hash}.json`);
+     if (fs.existsSync(contentPath)) {
+        fs.unlinkSync(contentPath);
+     }
+     return true;
+   } catch (err) {
+     console.error(`Failed to delete content file [${hash}]`, err);
+     return false;
+   }
+});

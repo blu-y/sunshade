@@ -57,6 +57,11 @@ let isApplyingHighlightDefault = false;
 let isHighlightModeEnabled = false;
 let saveDebounceTimer = null;
 let hasUnsavedHighlights = false;
+let userDataPath = "";
+window.sunshadeAPI.getUserDataPath().then((path) => {
+  userDataPath = path;
+  DocManager.init(); // Initialize file-based storage after path is ready
+});
 
 const themeToggle = document.getElementById("theme-toggle");
 const themeIcon = document.getElementById("theme-toggle-icon");
@@ -285,98 +290,179 @@ pdfDarkMode.init(eventBus);
 const highlightModeValue = pdfjsLib.AnnotationEditorType?.HIGHLIGHT ?? 9;
 const noEditorModeValue = pdfjsLib.AnnotationEditorType?.NONE ?? 0;
 
-// --- DocManager: History & Favorites & Cache ---
 const DocManager = {
   key: "sunshade-docs",
+  _cache: {},
 
-  getAll() {
+  async init() {
     try {
-      const raw = localStorage.getItem(this.key);
-      return raw ? JSON.parse(raw) : {};
-    } catch {
-      return {};
+      const fileData = await window.sunshadeAPI.loadIndex();
+      if (fileData) {
+        this._cache = JSON.parse(fileData);
+        console.log(`Index loaded from file [sunshade-index.json]. Count: ${Object.keys(this._cache).length}`);
+      } else {
+        // Will be handled by migration in main process if docs.json exists
+        this._cache = {};
+      }
+      this.notifyUpdate();
+    } catch (e) {
+      console.error("Failed to init DocManager index:", e);
     }
   },
 
-  saveAll(docs) {
+  getAll() {
+    return this._cache;
+  },
+
+  async saveAll(docs) {
     try {
-      localStorage.setItem(this.key, JSON.stringify(docs));
-      console.log("Docs saved. Count:", Object.keys(docs).length);
+      this._cache = docs;
+      await window.sunshadeAPI.saveIndex(JSON.stringify(docs, null, 2));
+      console.log(`Index saved to [${userDataPath}/sunshade-index.json]. Count:`, Object.keys(docs).length);
     } catch (e) {
-      console.error("Failed to save docs:", e);
+      console.error("Failed to save index:", e);
     }
   },
 
   get(path) {
-    const docs = this.getAll();
-    return docs[path] || null;
+    return this._cache[path] || null;
   },
 
-  save(path, data) {
+  async getHeavy(path) {
+    const doc = this.get(path);
+    if (!doc || !doc.contentHash) return null;
+    const raw = await window.sunshadeAPI.readContent(doc.contentHash);
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw);
+    } catch (e) {
+      console.error('Failed to parse heavy content for', path, e);
+      return null;
+    }
+  },
+
+  async save(path, data) {
     const docs = this.getAll();
     const isNew = !docs[path];
-    const newOrder = isNew ? Date.now() : (docs[path].order || docs[path].addedAt || docs[path].lastOpened || Date.now());
+    const newOrder = isNew
+      ? Date.now()
+      : docs[path].order ||
+        docs[path].addedAt ||
+        docs[path].lastOpened ||
+        Date.now();
+
+    // Check if we are saving heavy content (highlights, analysis, chatHistory, etc)
+    const { extractedText, analysis, highlights, chatHistory, ...metaOnly } = data;
+    const hasHeavyContent = extractedText !== undefined || analysis !== undefined || highlights !== undefined || chatHistory !== undefined;
+
+    let contentHash = isNew ? null : docs[path].contentHash;
     
+    // Hash generator helper function replacing Node'crypto block
+    async function sha256(message) {
+      const msgBuffer = new TextEncoder().encode(message);                    
+      const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));                     
+      const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+      return hashHex;
+    }
+
+    if (!contentHash) {
+       contentHash = await sha256(path + Date.now());
+    }
+
+    if (hasHeavyContent) {
+       // Read existing heavy content first to merge
+       let existingHeavy = {};
+       const existingRaw = await window.sunshadeAPI.readContent(contentHash);
+       if (existingRaw) existingHeavy = JSON.parse(existingRaw);
+
+       const newHeavy = {
+         extractedText: extractedText !== undefined ? extractedText : existingHeavy.extractedText,
+         analysis: analysis !== undefined ? analysis : existingHeavy.analysis,
+         highlights: highlights !== undefined ? highlights : existingHeavy.highlights,
+         chatHistory: chatHistory !== undefined ? chatHistory : existingHeavy.chatHistory,
+       };
+
+       await window.sunshadeAPI.saveContent(contentHash, JSON.stringify(newHeavy, null, 2));
+    }
+
+    // Keep lightweight properties in index
+    // Keep heavy properties OUT of index
+    const { extractedText: _1, analysis: _2, highlights: _3, chatHistory: _4, ...existingMeta } = docs[path] || {};
+
     docs[path] = {
-      ...docs[path],
-      ...data,
+      ...existingMeta,
+      ...metaOnly,
       path, // ensure path
+      contentHash,
       lastOpened: Date.now(),
       order: newOrder,
     };
-    this.saveAll(docs);
+    await this.saveAll(docs);
     this.notifyUpdate();
   },
 
-  updateOrders(pathsInOrder) {
+  async updateOrders(pathsInOrder) {
     const docs = this.getAll();
     pathsInOrder.forEach((path, index) => {
       if (docs[path]) {
         docs[path].order = pathsInOrder.length - index;
       }
     });
-    this.saveAll(docs);
+    await this.saveAll(docs);
     this.notifyUpdate();
   },
 
-  toggleFavorite(path) {
+  async toggleFavorite(path) {
     const docs = this.getAll();
     if (docs[path]) {
       docs[path].isFavorite = !docs[path].isFavorite;
-      this.saveAll(docs);
+      await this.saveAll(docs);
       this.notifyUpdate();
       return docs[path].isFavorite;
     }
     return false;
   },
 
-  delete(path) {
+  async delete(path) {
     const docs = this.getAll();
     if (docs[path]) {
+      const hash = docs[path].contentHash;
+      if (hash) {
+         await window.sunshadeAPI.deleteContent(hash);
+      }
       delete docs[path];
-      this.saveAll(docs);
+      await this.saveAll(docs);
       this.notifyUpdate();
-      console.log("Deleted doc:", path);
+      console.log("Deleted doc from file:", path);
     } else {
       console.warn("Doc not found to delete:", path);
     }
   },
 
-  clearHistory() {
+  async clearHistory() {
     const docs = this.getAll();
     let changed = false;
     let count = 0;
+    const promises = [];
     Object.keys(docs).forEach((path) => {
       if (!docs[path].isFavorite) {
+        if (docs[path].contentHash) {
+           promises.push(window.sunshadeAPI.deleteContent(docs[path].contentHash));
+        }
         delete docs[path];
         changed = true;
         count++;
       }
     });
+    
+    if (promises.length > 0) {
+       await Promise.allSettled(promises);
+    }
     if (changed) {
-      this.saveAll(docs);
+      await this.saveAll(docs);
       this.notifyUpdate();
-      console.log(`Cleared ${count} history items`);
+      console.log(`Cleared ${count} history items from file`);
     } else {
       console.log("No history items to clear");
     }
@@ -389,7 +475,10 @@ const DocManager = {
     if (filterType === "favorite") {
       list = list.filter((d) => d.isFavorite);
     }
-    return list.sort((a, b) => (b.order || b.lastOpened || 0) - (a.order || a.lastOpened || 0));
+    return list.sort(
+      (a, b) =>
+        (b.order || b.lastOpened || 0) - (a.order || a.lastOpened || 0),
+    );
   },
 
   notifyUpdate() {
@@ -427,14 +516,14 @@ function saveHighlights() {
 
 async function restoreHighlights() {
   if (!pdfDoc || !currentPdfPath) return;
-  const cached = DocManager.get(currentPdfPath);
-  if (!cached?.highlights?.length) return;
+  const heavyData = await DocManager.getHeavy(currentPdfPath);
+  if (!heavyData?.highlights?.length) return;
 
   const uiManager = pdfViewer._layerProperties?.annotationEditorUIManager;
   if (!uiManager) return;
 
   const byPage = new Map();
-  for (const h of cached.highlights) {
+  for (const h of heavyData.highlights) {
     const pi = h.pageIndex;
     if (!byPage.has(pi)) byPage.set(pi, []);
     byPage.get(pi).push(h);
@@ -869,7 +958,18 @@ async function loadPdfImpl(input) {
     renderSidebar();
 
     // --- Cache Logic ---
-    const cached = cachedDoc;
+    let cached = cachedDoc;
+    let heavyData = null;
+    
+    // Load heavy data block if needed
+    if (cached && cached.contentHash) {
+       heavyData = await DocManager.getHeavy(filePath);
+       
+       // Re-map it to cached so legacy logic flows
+       // Be careful not to mutate the index itself with heavy stuff
+       cached = { ...cached, ...(heavyData || {}) };
+    }
+
     if (cached && cached.analysis) {
       console.log("Restoring from cache:", filePath);
 
@@ -902,7 +1002,8 @@ async function loadPdfImpl(input) {
           briefList.innerHTML = "";
           lines.forEach((line) => {
             const li = document.createElement("li");
-            li.textContent = normalizeLine(line.replace(/^\d+[\).\s-]*/, ""));
+            const rawText = normalizeLine(line.replace(/^\d+[\).\s-]*/, ""));
+            li.innerHTML = renderInlineMathOnly(rawText);
             briefList.appendChild(li);
           });
           briefList.classList.remove("placeholder");
@@ -1191,6 +1292,7 @@ async function runChat(question) {
           onChunk: (chunk) => {
             accumulated += chunk;
             answerBody.innerHTML = renderMarkdownToHtml(accumulated);
+            answerBody.dataset.raw = accumulated; // Save raw markdown
             // Scroll parent container to bottom
             const scrollContent = document.querySelector(
               ".summary-scroll-content",
@@ -1213,7 +1315,8 @@ async function runChat(question) {
       const history = [];
       document.querySelectorAll(".chat-item").forEach((item) => {
         const q = item.querySelector(".chat-q")?.textContent;
-        const a = item.querySelector(".chat-a")?.innerHTML; // Save HTML for markdown
+        const aEl = item.querySelector(".chat-a");
+        const a = aEl?.dataset?.raw || aEl?.innerHTML; // Save raw markdown
         if (q && a) history.push({ q, a });
       });
       DocManager.save(currentPdfPath, { chatHistory: history });
@@ -1244,7 +1347,11 @@ function createChatElement(question, answer = "") {
 
   const aEl = document.createElement("div");
   aEl.className = "chat-a";
-  aEl.innerHTML = answer; // Use innerHTML for markdown
+  
+  // Backward compatibility: If it's old HTML cache, render directly. If it's markdown, parse it.
+  const isHtml = answer.includes("<p>") || answer.includes("<span class=\"katex");
+  aEl.innerHTML = isHtml ? answer : renderMarkdownToHtml(answer);
+  aEl.dataset.raw = answer; // Always store original source string
 
   // Delete button
   const delBtn = document.createElement("img");
@@ -1336,12 +1443,12 @@ function saveChatHistory() {
   const history = [];
   document.querySelectorAll(".chat-item").forEach((item) => {
     const q = item.querySelector(".chat-q")?.textContent;
-    const a = item.querySelector(".chat-a")?.innerHTML;
+    const aEl = item.querySelector(".chat-a");
+    const a = aEl?.dataset?.raw || aEl?.innerHTML;
     if (q && a) history.push({ q, a });
   });
   const doc = DocManager.get(currentPdfPath);
   if (doc) {
-    doc.chatHistory = history;
     DocManager.save(currentPdfPath, { chatHistory: history });
   }
 }
@@ -1573,6 +1680,22 @@ function renderMarkdownToHtml(md) {
   });
 
   return html;
+  return html;
+}
+
+function renderInlineMathOnly(text) {
+  if (!text) return "";
+  return text.replace(/(\$\$[\s\S]+?\$\$|\$[^\$]+?\$)/g, (match) => {
+    try {
+      if (match.startsWith("$$")) {
+        return katex.renderToString(match.slice(2, -2), { throwOnError: false, displayMode: true });
+      } else {
+        return katex.renderToString(match.slice(1, -1), { throwOnError: false, displayMode: false });
+      }
+    } catch {
+      return match;
+    }
+  });
 }
 
 // renderMath helper is no longer needed separately, but we can keep it for legacy calls or remove it.
@@ -1815,9 +1938,8 @@ async function generateSummaries() {
               briefList.innerHTML = "";
               lines.forEach((line) => {
                 const li = document.createElement("li");
-                li.textContent = normalizeLine(
-                  line.replace(/^\d+[\).\s-]*/, ""),
-                );
+                const cleanLine = normalizeLine(line.replace(/^\d+[\).\s-]*/, ""));
+                li.innerHTML = renderInlineMathOnly(cleanLine);
                 briefList.appendChild(li);
               });
             }
@@ -1835,9 +1957,8 @@ async function generateSummaries() {
             } else {
               lines.forEach((line) => {
                 const li = document.createElement("li");
-                li.textContent = normalizeLine(
-                  line.replace(/^\d+[\).\s-]*/, ""),
-                );
+                const cleanLine = normalizeLine(line.replace(/^\d+[\).\s-]*/, ""));
+                li.innerHTML = renderInlineMathOnly(cleanLine);
                 briefList.appendChild(li);
               });
             }
@@ -1894,7 +2015,7 @@ async function generateSummaries() {
           summary: lastSummaryRaw,
         },
       });
-      console.log("Analysis saved to history");
+      console.log(`Analysis saved to history at [${userDataPath}/Local Storage] within key [sunshade-docs]`);
       if (regenAllBtn) regenAllBtn.style.display = "flex"; // Show regen button
     });
   } catch (err) {
@@ -2201,11 +2322,11 @@ document.addEventListener("click", async (e) => {
     if (section === "brief") text = formatBriefForCopy();
     if (section === "summary") text = lastSummaryRaw;
     if (section === "chat") {
-      // Copy entire chat history
       const history = [];
       document.querySelectorAll(".chat-item").forEach((item) => {
         const q = item.querySelector(".chat-q")?.textContent;
-        const a = item.querySelector(".chat-a")?.textContent;
+        const aEl = item.querySelector(".chat-a");
+        const a = aEl?.dataset?.raw || aEl?.textContent;
         if (q && a) history.push(`Q: ${q}\nA: ${a}`);
       });
       text = history.join("\n\n");
@@ -2257,11 +2378,12 @@ document.addEventListener("click", async (e) => {
             lastKeywordsRaw = rawAcc;
             renderKeywords(lastKeywordsRaw);
             // Update cache
-            const doc = DocManager.get(currentPdfPath);
-            if (doc) {
-              doc.analysis.keywords = lastKeywordsRaw;
-              DocManager.save(currentPdfPath, { analysis: doc.analysis });
-            }
+            DocManager.getHeavy(currentPdfPath).then(heavyData => {
+               if (heavyData && heavyData.analysis) {
+                 heavyData.analysis.keywords = lastKeywordsRaw;
+                 DocManager.save(currentPdfPath, { analysis: heavyData.analysis });
+               }
+            });
           },
         );
       } else if (section === "brief") {
@@ -2283,9 +2405,8 @@ document.addEventListener("click", async (e) => {
               briefList.innerHTML = "";
               lines.forEach((line) => {
                 const li = document.createElement("li");
-                li.textContent = normalizeLine(
-                  line.replace(/^\d+[\).\s-]*/, ""),
-                );
+                const cleanLine = normalizeLine(line.replace(/^\d+[\).\s-]*/, ""));
+                li.innerHTML = renderInlineMathOnly(cleanLine);
                 briefList.appendChild(li);
               });
             }
@@ -2295,11 +2416,12 @@ document.addEventListener("click", async (e) => {
             const lines = parseBriefLines(lastBriefRaw).slice(0, 3);
             lastBriefLines = lines;
             // Update cache
-            const doc = DocManager.get(currentPdfPath);
-            if (doc) {
-              doc.analysis.brief = lastBriefRaw;
-              DocManager.save(currentPdfPath, { analysis: doc.analysis });
-            }
+            DocManager.getHeavy(currentPdfPath).then(heavyData => {
+               if (heavyData && heavyData.analysis) {
+                 heavyData.analysis.brief = lastBriefRaw;
+                 DocManager.save(currentPdfPath, { analysis: heavyData.analysis });
+               }
+            });
           },
         );
       } else if (section === "summary") {
@@ -2327,11 +2449,12 @@ document.addEventListener("click", async (e) => {
             lastSummaryRaw = dedupeSummary(rawAcc);
             summaryBody.innerHTML = renderMarkdownToHtml(lastSummaryRaw);
             // Update cache
-            const doc = DocManager.get(currentPdfPath);
-            if (doc) {
-              doc.analysis.summary = lastSummaryRaw;
-              DocManager.save(currentPdfPath, { analysis: doc.analysis });
-            }
+            DocManager.getHeavy(currentPdfPath).then(heavyData => {
+               if (heavyData && heavyData.analysis) {
+                 heavyData.analysis.summary = lastSummaryRaw;
+                 DocManager.save(currentPdfPath, { analysis: heavyData.analysis });
+               }
+            });
           },
         );
       }
@@ -2768,7 +2891,7 @@ document.addEventListener("click", async (e) => {
       showToast(btn, "PDF를 먼저 열어주세요");
       return;
     }
-    const isFav = DocManager.toggleFavorite(currentPdfPath);
+    const isFav = await DocManager.toggleFavorite(currentPdfPath);
     // showToast(btn, isFav ? '즐겨찾기 추가됨' : '즐겨찾기 해제됨'); // Toast handled by toggle logic? No.
     // Update button state immediately
     updateFavoriteButtonState();
