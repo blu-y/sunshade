@@ -55,6 +55,8 @@ let lastKeywordsList = [];
 let pendingHighlightDefaultColor = null;
 let isApplyingHighlightDefault = false;
 let isHighlightModeEnabled = false;
+let saveDebounceTimer = null;
+let hasUnsavedHighlights = false;
 
 const themeToggle = document.getElementById("theme-toggle");
 const themeIcon = document.getElementById("theme-toggle-icon");
@@ -312,12 +314,27 @@ const DocManager = {
 
   save(path, data) {
     const docs = this.getAll();
+    const isNew = !docs[path];
+    const newOrder = isNew ? Date.now() : (docs[path].order || docs[path].addedAt || docs[path].lastOpened || Date.now());
+    
     docs[path] = {
       ...docs[path],
       ...data,
       path, // ensure path
       lastOpened: Date.now(),
+      order: newOrder,
     };
+    this.saveAll(docs);
+    this.notifyUpdate();
+  },
+
+  updateOrders(pathsInOrder) {
+    const docs = this.getAll();
+    pathsInOrder.forEach((path, index) => {
+      if (docs[path]) {
+        docs[path].order = pathsInOrder.length - index;
+      }
+    });
     this.saveAll(docs);
     this.notifyUpdate();
   },
@@ -372,8 +389,7 @@ const DocManager = {
     if (filterType === "favorite") {
       list = list.filter((d) => d.isFavorite);
     }
-    // Sort by lastOpened desc
-    return list.sort((a, b) => (b.lastOpened || 0) - (a.lastOpened || 0));
+    return list.sort((a, b) => (b.order || b.lastOpened || 0) - (a.order || a.lastOpened || 0));
   },
 
   notifyUpdate() {
@@ -433,16 +449,29 @@ async function restoreHighlights() {
     const layer = uiManager.getLayer(pageIndex);
     if (!layer) return;
     restoredPages.add(pageIndex);
+
+    const scrollEl = viewerContainer;
+    const scrollTop = scrollEl ? scrollEl.scrollTop : 0;
+    const scrollLeft = scrollEl ? scrollEl.scrollLeft : 0;
+
     for (const data of items) {
       try {
         const editor = await layer.deserialize(data);
         if (editor) {
           layer.addOrRebuild(editor);
           uiManager.addToAnnotationStorage(editor);
+          editor.unselect?.();
         }
       } catch (e) {
         console.warn(`Failed to restore highlight on page ${pageIndex}:`, e);
       }
+    }
+
+    uiManager.unselectAll?.();
+
+    if (scrollEl) {
+      scrollEl.scrollTop = scrollTop;
+      scrollEl.scrollLeft = scrollLeft;
     }
   }
 
@@ -466,7 +495,7 @@ async function restoreHighlights() {
 
 // Sync page number
 eventBus.on("pagesinit", () => {
-  pdfViewer.currentScaleValue = "auto";
+  pdfViewer.currentScaleValue = isPageWidthFit ? "page-width" : "auto";
   updatePdfControls(); // Update UI immediately after init
 });
 eventBus.on("pagechanging", (evt) => {
@@ -740,44 +769,57 @@ openaiChip?.addEventListener("click", async () => {
 refreshOpenAIStatus().catch((err) => console.error("OpenAI status error", err));
 
 // PDF render helpers
-async function loadPdf(input) {
+let loadPdfQueue = Promise.resolve();
+function loadPdf(input) {
+  loadPdfQueue = loadPdfQueue.then(() => loadPdfImpl(input)).catch(() => {});
+  return loadPdfQueue;
+}
+
+async function loadPdfImpl(input) {
   if (!input) return;
   if (!pdfjsLib || !viewerContainer) {
     logMessage("PDF engine not ready", "warn");
     return;
   }
 
-  saveHighlights();
-
-  let arrayBuffer;
-  let filePath = "";
-  let fileName = "";
-
   try {
+    let targetFilePath = "";
+    if (typeof input === "string") {
+      targetFilePath = input;
+    } else {
+      try {
+        targetFilePath = window.sunshadeAPI.getPathForFile(input);
+      } catch (e) {
+        targetFilePath = input.path || input.name;
+      }
+    }
+    
+    if (currentPdfPath === targetFilePath) {
+      console.log("PDF already loaded:", targetFilePath);
+      return;
+    }
+
+    if (hasUnsavedHighlights) {
+      saveHighlights();
+      hasUnsavedHighlights = false;
+    }
+    clearTimeout(saveDebounceTimer);
+    saveDebounceTimer = null;
+
+    let arrayBuffer;
+    let filePath = "";
+    let fileName = "";
+
     if (typeof input === "string") {
       // Path based load (from history)
-      filePath = input;
+      filePath = targetFilePath;
       fileName = input.split(/[/\\]/).pop();
       const buffer = await window.sunshadeAPI.readFile(filePath);
       arrayBuffer = buffer.buffer;
     } else {
       // File object load (drag drop / open)
-      // Use webUtils via preload to get real path
-      try {
-        filePath = window.sunshadeAPI.getPathForFile(input);
-      } catch (e) {
-        console.warn("Failed to get file path:", e);
-        filePath = input.path || ""; // Fallback
-      }
-
+      filePath = targetFilePath;
       fileName = input.name;
-
-      // Fallback if path is empty
-      if (!filePath) {
-        console.warn("File path missing, using name as ID");
-        filePath = fileName;
-      }
-
       arrayBuffer = await input.arrayBuffer();
     }
 
@@ -793,8 +835,14 @@ async function loadPdf(input) {
     pdfLinkService.setDocument(pdfDoc, null);
     applyHighlightMode(false);
 
-    let saveDebounceTimer = null;
+    clearTimeout(saveDebounceTimer);
+    saveDebounceTimer = null;
+    const loadedPath = currentPdfPath;
+    const loadedDoc = pdfDoc;
     pdfDoc.annotationStorage.onSetModified = () => {
+      // Staleness guard: ignore if another document was loaded since
+      if (currentPdfPath !== loadedPath || pdfDoc !== loadedDoc) return;
+      hasUnsavedHighlights = true;
       clearTimeout(saveDebounceTimer);
       saveDebounceTimer = setTimeout(() => saveHighlights(), 500);
     };
@@ -2415,9 +2463,71 @@ function renderHistoryList() {
   ul.className = "side-nav-list";
   ul.style.marginTop = "0";
 
+  let draggedItem = null;
+
   list.forEach((doc) => {
     const li = document.createElement("li");
     li.title = doc.path;
+    li.dataset.path = doc.path;
+    li.draggable = true;
+
+    li.addEventListener("dragstart", (e) => {
+      draggedItem = li;
+      li.style.opacity = "0.5";
+      e.dataTransfer.effectAllowed = "move";
+    });
+
+    li.addEventListener("dragend", () => {
+      draggedItem = null;
+      li.style.opacity = "1";
+      document.querySelectorAll(".side-nav-list li").forEach((el) => {
+        el.classList.remove("drop-above", "drop-below");
+      });
+    });
+
+    li.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      if (!draggedItem || draggedItem === li) return;
+      
+      const bounding = li.getBoundingClientRect();
+      const offset = bounding.y + bounding.height / 2;
+      
+      document.querySelectorAll(".side-nav-list li").forEach(el => {
+        if (el !== li) {
+          el.classList.remove("drop-above", "drop-below");
+        }
+      });
+
+      if (e.clientY - offset > 0) {
+        li.classList.remove("drop-above");
+        li.classList.add("drop-below");
+      } else {
+        li.classList.add("drop-above");
+        li.classList.remove("drop-below");
+      }
+    });
+
+    li.addEventListener("dragleave", () => {
+      li.classList.remove("drop-above", "drop-below");
+    });
+
+    li.addEventListener("drop", (e) => {
+      e.preventDefault();
+      li.classList.remove("drop-above", "drop-below");
+      if (!draggedItem || draggedItem === li) return;
+
+      const bounding = li.getBoundingClientRect();
+      const offset = bounding.y + bounding.height / 2;
+      
+      if (e.clientY - offset > 0) {
+        li.after(draggedItem);
+      } else {
+        li.before(draggedItem);
+      }
+
+      const newOrderPaths = Array.from(ul.children).map(child => child.dataset.path);
+      setTimeout(() => DocManager.updateOrders(newOrderPaths), 0);
+    });
 
     const name = document.createElement("span");
     name.textContent = doc.name.replace(/\.pdf$/i, "");
@@ -2504,9 +2614,71 @@ function renderFavoriteList() {
   ul.className = "side-nav-list";
   ul.style.marginTop = "0";
 
+  let draggedItem = null;
+
   list.forEach((doc) => {
     const li = document.createElement("li");
     li.title = doc.path;
+    li.dataset.path = doc.path;
+    li.draggable = true;
+
+    li.addEventListener("dragstart", (e) => {
+      draggedItem = li;
+      li.style.opacity = "0.5";
+      e.dataTransfer.effectAllowed = "move";
+    });
+
+    li.addEventListener("dragend", () => {
+      draggedItem = null;
+      li.style.opacity = "1";
+      document.querySelectorAll(".side-nav-list li").forEach((el) => {
+        el.classList.remove("drop-above", "drop-below");
+      });
+    });
+
+    li.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      if (!draggedItem || draggedItem === li) return;
+      
+      const bounding = li.getBoundingClientRect();
+      const offset = bounding.y + bounding.height / 2;
+      
+      document.querySelectorAll(".side-nav-list li").forEach(el => {
+        if (el !== li) {
+          el.classList.remove("drop-above", "drop-below");
+        }
+      });
+
+      if (e.clientY - offset > 0) {
+        li.classList.remove("drop-above");
+        li.classList.add("drop-below");
+      } else {
+        li.classList.add("drop-above");
+        li.classList.remove("drop-below");
+      }
+    });
+
+    li.addEventListener("dragleave", () => {
+      li.classList.remove("drop-above", "drop-below");
+    });
+
+    li.addEventListener("drop", (e) => {
+      e.preventDefault();
+      li.classList.remove("drop-above", "drop-below");
+      if (!draggedItem || draggedItem === li) return;
+
+      const bounding = li.getBoundingClientRect();
+      const offset = bounding.y + bounding.height / 2;
+      
+      if (e.clientY - offset > 0) {
+        li.after(draggedItem);
+      } else {
+        li.before(draggedItem);
+      }
+
+      const newOrderPaths = Array.from(ul.children).map(child => child.dataset.path);
+      setTimeout(() => DocManager.updateOrders(newOrderPaths), 0);
+    });
 
     const name = document.createElement("span");
     name.textContent = doc.name.replace(/\.pdf$/i, "");

@@ -400,6 +400,34 @@
         background: var(--accent-bg) !important;
         color: var(--text-accent) !important;
       }
+      /* Drag and Drop Indicators */
+      .side-nav-list li {
+        position: relative;
+      }
+      .side-nav-list li.drop-above::before {
+        content: '';
+        position: absolute;
+        top: -2px;
+        left: 0;
+        right: 0;
+        height: 3px;
+        background: var(--accent);
+        border-radius: 2px;
+        z-index: 10;
+        pointer-events: none;
+      }
+      .side-nav-list li.drop-below::after {
+        content: '';
+        position: absolute;
+        bottom: -2px;
+        left: 0;
+        right: 0;
+        height: 3px;
+        background: var(--accent);
+        border-radius: 2px;
+        z-index: 10;
+        pointer-events: none;
+      }
       .side-nav-list li span {
         font-size: 12px;
       }

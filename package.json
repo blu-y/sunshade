@@ -1,7 +1,7 @@
 {
   "name": "sunshade",
   "productName": "Sunshade",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Sunshade: AI paper analysis tool",
   "author": "Neoul <neoul.ro@gmail.com>",
   "main": "main.js",
