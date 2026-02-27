@@ -13,6 +13,7 @@ release/
 coverage/
 test.txt
 debug/
+.rgrc
 
 # Logs
 *.log
