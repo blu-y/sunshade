@@ -1,5 +1,5 @@
 import { DocManager } from "./modules/docManager.js";
-import { initPdfViewer, wirePdfInput, setupPdfControls, setupResizers, setupOpenAIApi, setupModelSelector, setupRegenAll, getPdfViewer } from "./modules/pdfControls.js";
+import { initPdfViewer, wirePdfInput, setupPdfControls, setupResizers, setupOpenAIApi, setupModelSelector, setupRegenAll, getPdfViewer, saveCurrentPdfState } from "./modules/pdfControls.js";
 import { init as initTheme } from "./modules/theme.js";
 import { init as initPdfDarkMode } from "./modules/pdfDarkMode.js";
 import { setupEditToolbarObserver, setupGlobalToolbarObserver } from "./modules/highlights.js";
@@ -65,9 +65,7 @@ async function init() {
   });
 
   window.addEventListener("beforeunload", () => {
-    import("./modules/highlights.js").then((mod) => {
-      mod.saveHighlights();
-    });
+    saveCurrentPdfState();
   });
 }
 

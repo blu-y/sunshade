@@ -96,26 +96,35 @@ function applyHighlightMode(enabled) {
   }
 }
 
-function saveHighlights() {
-  if (!state.pdfDocumentProxy || !state.currentPdfPath) return;
-  try {
-    const highlights = [];
-    const storage = state.pdfDocumentProxy.annotationStorage;
-    if (storage && storage.size > 0) {
-      const { map } = storage.serializable;
-      if (map && map.size > 0) {
-        for (const [key, val] of map) {
-          if (val.annotationType === pdfjsLib.AnnotationEditorType.HIGHLIGHT) {
-            const { outlines, ...rest } = val;
-            if (rest.quadPoints && !(rest.quadPoints instanceof Array)) {
-              rest.quadPoints = Array.from(rest.quadPoints);
-            }
-            highlights.push({ ...rest, id: undefined, storageKey: key });
+function getHighlightsData() {
+  if (!state.pdfDocumentProxy) return null;
+  const highlights = [];
+  const storage = state.pdfDocumentProxy.annotationStorage;
+  if (storage && storage.size > 0) {
+    const { map } = storage.serializable;
+    if (map && map.size > 0) {
+      for (const [key, val] of map) {
+        if (val.annotationType === pdfjsLib.AnnotationEditorType.HIGHLIGHT) {
+          const data = { ...val };
+          if (data.quadPoints && !(data.quadPoints instanceof Array)) {
+            data.quadPoints = Array.from(data.quadPoints);
           }
+          // outlines는 가끔 복구에 필요할 수 있으므로 포함 (용량이 아주 크지 않음)
+          highlights.push({ ...data, id: undefined, storageKey: key });
         }
       }
     }
-    DocManager.save(state.currentPdfPath, { highlights });
+  }
+  return highlights;
+}
+
+function saveHighlights() {
+  if (!state.pdfDocumentProxy || !state.currentPdfPath) return;
+  try {
+    const highlights = getHighlightsData();
+    if (highlights) {
+      DocManager.save(state.currentPdfPath, { highlights });
+    }
   } catch (e) {
     console.warn("Failed to save highlights:", e);
   }
@@ -150,6 +159,7 @@ async function restoreHighlights(pdfViewer) {
     const scrollTop = scrollEl ? scrollEl.scrollTop : 0;
     const scrollLeft = scrollEl ? scrollEl.scrollLeft : 0;
 
+    console.log(`Restoring ${items.length} highlights on page ${pageIndex}`);
     for (const data of items) {
       try {
         const editor = await layer.deserialize(data);
@@ -157,9 +167,11 @@ async function restoreHighlights(pdfViewer) {
           layer.addOrRebuild(editor);
           uiManager.addToAnnotationStorage(editor);
           editor.unselect?.();
+        } else {
+          console.warn(`Failed to deserialize highlight data on page ${pageIndex}:`, data);
         }
       } catch (e) {
-        console.warn(`Failed to restore highlight on page ${pageIndex}:`, e);
+        console.error(`Error during highlight restoration on page ${pageIndex}:`, e, data);
       }
     }
 
@@ -311,4 +323,5 @@ export {
   restoreHighlights,
   setupHighlightEventHandlers,
   setupGlobalToolbarObserver,
+  getHighlightsData,
 };

@@ -31,6 +31,8 @@ const state = {
   isApplyingHighlightDefault: false,
   isHighlightModeEnabled: false,
   saveDebounceTimer: null,
+  pageSaveTimer: null,
+  scrollSaveTimer: null,
   hasUnsavedHighlights: false,
   currentModel: localStorage.getItem("sunshade-model") || "gpt-5.1-codex",
   isPageWidthFit: false,

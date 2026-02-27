@@ -50,60 +50,98 @@ const DocManager = {
     }
   },
 
+  _saveQueue: Promise.resolve(),
+
   async save(path, data) {
-    const docs = this.getAll();
-    const isNew = !docs[path];
-    const newOrder = isNew
-      ? Date.now()
-      : docs[path].order ||
-        docs[path].addedAt ||
-        docs[path].lastOpened ||
-        Date.now();
+    // 큐를 사용하여 순차적으로 저장 처리 (경합 방지)
+    this._saveQueue = this._saveQueue.then(async () => {
+      try {
+        const docs = this.getAll();
+        const isNew = !docs[path];
+        const newOrder = isNew
+          ? Date.now()
+          : docs[path].order ||
+            docs[path].addedAt ||
+            docs[path].lastOpened ||
+            Date.now();
 
-    const { extractedText, analysis, highlights, chatHistory, ...metaOnly } = data;
-    const hasHeavyContent = extractedText !== undefined || analysis !== undefined || highlights !== undefined || chatHistory !== undefined;
+        const { extractedText, analysis, highlights, chatHistory, ...metaOnly } = data;
+        const hasHeavyContent =
+          extractedText !== undefined ||
+          analysis !== undefined ||
+          highlights !== undefined ||
+          chatHistory !== undefined;
 
-    let contentHash = isNew ? null : docs[path].contentHash;
+        let contentHash = isNew ? null : docs[path].contentHash;
 
-    async function sha256(message) {
-      const msgBuffer = new TextEncoder().encode(message);
-      const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
-      const hashArray = Array.from(new Uint8Array(hashBuffer));
-      const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-      return hashHex;
-    }
+        async function sha256(message) {
+          const msgBuffer = new TextEncoder().encode(message);
+          const hashBuffer = await crypto.subtle.digest("SHA-256", msgBuffer);
+          const hashArray = Array.from(new Uint8Array(hashBuffer));
+          const hashHex = hashArray
+            .map((b) => b.toString(16).padStart(2, "0"))
+            .join("");
+          return hashHex;
+        }
 
-    if (!contentHash) {
-      contentHash = await sha256(path + Date.now());
-    }
+        if (!contentHash) {
+          contentHash = await sha256(path + Date.now());
+        }
 
-    if (hasHeavyContent) {
-      let existingHeavy = {};
-      const existingRaw = await window.sunshadeAPI.readContent(contentHash);
-      if (existingRaw) existingHeavy = JSON.parse(existingRaw);
+        if (hasHeavyContent) {
+          let existingHeavy = {};
+          const existingRaw = await window.sunshadeAPI.readContent(contentHash);
+          if (existingRaw) {
+            try {
+              existingHeavy = JSON.parse(existingRaw);
+            } catch (e) {
+              console.warn("Failed to parse existing heavy data:", e);
+            }
+          }
 
-      const newHeavy = {
-        extractedText: extractedText !== undefined ? extractedText : existingHeavy.extractedText,
-        analysis: analysis !== undefined ? analysis : existingHeavy.analysis,
-        highlights: highlights !== undefined ? highlights : existingHeavy.highlights,
-        chatHistory: chatHistory !== undefined ? chatHistory : existingHeavy.chatHistory,
-      };
+          const newHeavy = {
+            extractedText:
+              extractedText !== undefined
+                ? extractedText
+                : existingHeavy.extractedText,
+            analysis: analysis !== undefined ? analysis : existingHeavy.analysis,
+            highlights:
+              highlights !== undefined ? highlights : existingHeavy.highlights,
+            chatHistory:
+              chatHistory !== undefined
+                ? chatHistory
+                : existingHeavy.chatHistory,
+          };
 
-      await window.sunshadeAPI.saveContent(contentHash, JSON.stringify(newHeavy, null, 2));
-    }
+          await window.sunshadeAPI.saveContent(
+            contentHash,
+            JSON.stringify(newHeavy, null, 2),
+          );
+        }
 
-    const { extractedText: _1, analysis: _2, highlights: _3, chatHistory: _4, ...existingMeta } = docs[path] || {};
+        const {
+          extractedText: _1,
+          analysis: _2,
+          highlights: _3,
+          chatHistory: _4,
+          ...existingMeta
+        } = docs[path] || {};
 
-    docs[path] = {
-      ...existingMeta,
-      ...metaOnly,
-      path,
-      contentHash,
-      lastOpened: Date.now(),
-      order: newOrder,
-    };
-    await this.saveAll(docs);
-    this.notifyUpdate();
+        docs[path] = {
+          ...existingMeta,
+          ...metaOnly,
+          path,
+          contentHash,
+          lastOpened: Date.now(),
+          order: newOrder,
+        };
+        await this.saveAll(docs);
+        this.notifyUpdate();
+      } catch (err) {
+        console.error("DocManager.save error:", err);
+      }
+    });
+    return this._saveQueue;
   },
 
   async updateOrders(pathsInOrder) {

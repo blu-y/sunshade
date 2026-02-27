@@ -1,7 +1,7 @@
 import { pdfjsLib, PDFViewer, pdfLinkService, state, uiRefs, eventBus } from "./config.js";
 import { DocManager } from "./docManager.js";
 import { logMessage, showToast } from "./uiHelpers.js";
-import { applyHighlightMode, saveHighlights, setupHighlightEventHandlers } from "./highlights.js";
+import { applyHighlightMode, saveHighlights, setupHighlightEventHandlers, getHighlightsData } from "./highlights.js";
 import { loadOutline, updateOutlineHighlight } from "./outline.js";
 import { updateSummaryPlaceholders, generateSummaries } from "./summarization.js";
 import { renderMarkdownToHtml, renderInlineMathOnly, parseBriefLines } from "./textProcessors.js";
@@ -9,6 +9,27 @@ import { renderSidebar } from "./sidebar.js";
 
 let pdfViewer = null;
 let loadPdfQueue = Promise.resolve();
+
+/**
+ * 현재 열려있는 PDF의 상태(페이지, 배율, 스크롤 비율)를 즉시 저장합니다.
+ */
+function saveCurrentPdfState() {
+  if (!state.currentPdfPath || !pdfViewer || !pdfViewer.pdfDocument) return;
+  const container = uiRefs.viewerContainer;
+  const percent = container.scrollHeight > 0 ? container.scrollTop / container.scrollHeight : 0;
+  
+  const highlights = getHighlightsData();
+  const saveData = {
+    lastPercent: percent,
+    lastScale: pdfViewer.currentScale,
+    lastPage: pdfViewer.currentPageNumber
+  };
+  if (highlights) {
+    saveData.highlights = highlights;
+  }
+  
+  DocManager.save(state.currentPdfPath, saveData);
+}
 
 function initPdfViewer() {
   pdfViewer = new PDFViewer({
@@ -78,6 +99,9 @@ async function loadPdfImpl(input) {
       return;
     }
 
+    // 새 문서를 불러오기 전 현재 문서의 상태를 즉시 저장
+    saveCurrentPdfState();
+
     if (state.hasUnsavedHighlights) {
       saveHighlights();
       state.hasUnsavedHighlights = false;
@@ -103,7 +127,13 @@ async function loadPdfImpl(input) {
     console.log("Loading PDF from:", filePath);
     state.currentPdfPath = filePath;
     const cachedDoc = DocManager.get(filePath);
-    state.pendingHighlightDefaultColor = cachedDoc?.highlightDefaultColor || null;
+    let cached = cachedDoc;
+    let heavyData = null;
+    if (cached && cached.contentHash) {
+      heavyData = await DocManager.getHeavy(filePath);
+      cached = { ...cached, ...(heavyData || {}) };
+    }
+    state.pendingHighlightDefaultColor = cached?.highlightDefaultColor || null;
 
     const loadingTask = pdfjsLib.getDocument({
       data: arrayBuffer,
@@ -122,7 +152,41 @@ async function loadPdfImpl(input) {
 
     document.querySelector(".pdf-pane").classList.add("has-pdf");
     loadOutline(pdfDoc);
+
+    // 뷰어 컨테이너 숨김 (1페이지 번쩍임 방지)
+    uiRefs.viewerContainer.style.opacity = "0";
+    uiRefs.viewerContainer.style.transition = "none";
     togglePdfPlaceholder(false);
+
+    if (cached && (cached.lastPage || cached.lastPercent !== undefined)) {
+      const onPagesLoaded = () => {
+        // 1. 배율 설정: 전역 맞춤 설정이 우선, 없으면 저장된 배율 사용
+        if (state.isPageWidthFit) {
+          pdfViewer.currentScaleValue = "page-width";
+        } else if (cached.lastScale) {
+          pdfViewer.currentScaleValue = cached.lastScale;
+        }
+
+        // 2. 배율 적용 후 레이아웃이 확정될 시간을 벌고 스크롤 복구
+        setTimeout(() => {
+          const container = uiRefs.viewerContainer;
+          if (cached.lastPercent !== undefined && container.scrollHeight > 0) {
+            // 비율(%) 기반으로 스크롤 위치 복원
+            container.scrollTop = cached.lastPercent * container.scrollHeight;
+          } else if (cached.lastPage) {
+            pdfViewer.currentPageNumber = cached.lastPage;
+          }
+
+          // 모든 과정 완료 후 뷰어 노출
+          uiRefs.viewerContainer.style.opacity = "1";
+        }, 250); // 배율 계산을 위해 지연 시간을 살짝 늘림
+
+        eventBus.off("pagesloaded", onPagesLoaded);
+      };
+      eventBus.on("pagesloaded", onPagesLoaded);
+    } else {
+      uiRefs.viewerContainer.style.opacity = "1";
+    }
 
     const scrollContent = document.querySelector(".summary-scroll-content");
     if (scrollContent) scrollContent.scrollTop = 0;
@@ -134,14 +198,6 @@ async function loadPdfImpl(input) {
     if (uiRefs.chatEmpty) uiRefs.chatEmpty.style.display = "block";
 
     renderSidebar();
-
-    let cached = cachedDoc;
-    let heavyData = null;
-
-    if (cached && cached.contentHash) {
-      heavyData = await DocManager.getHeavy(filePath);
-      cached = { ...cached, ...(heavyData || {}) };
-    }
 
     if (cached && cached.analysis) {
       console.log("Restoring from cache:", filePath);
@@ -335,12 +391,34 @@ function setupPdfControls() {
     if (uiRefs.pdfPageDisplay) uiRefs.pdfPageDisplay.textContent = `${page} / ${num}`;
     updatePdfControls();
     updateOutlineHighlight(page);
+
+    if (state.currentPdfPath) {
+      clearTimeout(state.pageSaveTimer);
+      state.pageSaveTimer = setTimeout(() => {
+        DocManager.save(state.currentPdfPath, { lastPage: page });
+      }, 1000);
+    }
   });
 
   eventBus.on("scalechanging", (evt) => {
     if (uiRefs.pdfZoomLevel && document.activeElement !== uiRefs.pdfZoomLevel) {
       uiRefs.pdfZoomLevel.value = `${Math.round(evt.scale * 100)}%`;
     }
+  });
+
+  // 스크롤 위치 저장 (상대적 비율로 저장)
+  uiRefs.viewerContainer?.addEventListener("scroll", () => {
+    if (!state.currentPdfPath || !pdfViewer.pdfDocument) return;
+    clearTimeout(state.scrollSaveTimer);
+    state.scrollSaveTimer = setTimeout(() => {
+      const container = uiRefs.viewerContainer;
+      const percent = container.scrollHeight > 0 ? container.scrollTop / container.scrollHeight : 0;
+      DocManager.save(state.currentPdfPath, {
+        lastPercent: percent,
+        lastScale: pdfViewer.currentScale,
+        lastPage: pdfViewer.currentPageNumber
+      });
+    }, 1500);
   });
 
   setupHighlightEventHandlers(pdfViewer);
@@ -547,4 +625,4 @@ function getPdfViewer() {
   return pdfViewer;
 }
 
-export { initPdfViewer, loadPdf, togglePdfPlaceholder, wirePdfInput, setupPdfControls, setupResizers, setupOpenAIApi, setupModelSelector, setupRegenAll, getPdfViewer };
+export { initPdfViewer, loadPdf, togglePdfPlaceholder, wirePdfInput, setupPdfControls, setupResizers, setupOpenAIApi, setupModelSelector, setupRegenAll, getPdfViewer, saveCurrentPdfState };
