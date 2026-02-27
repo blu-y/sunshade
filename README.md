@@ -1,4 +1,6 @@
-# 🏖️ Sunshade: AI paper analysis tool v0.1.1
+# 🏖️ Sunshade: AI paper analysis tool
+
+<img width="1359" height="850" alt="sunshade" src="https://github.com/user-attachments/assets/0ad01b2c-43bd-45e6-be97-4d7b9fa91465" />
 
 ### ✨ Key Features
 
