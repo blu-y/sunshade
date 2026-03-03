@@ -5,6 +5,8 @@ import { renderMarkdownToHtml, formatBriefForCopy, formatKeywordsForCopy } from 
 
 let loadPdfCallback = null;
 let regenAllCallback = null;
+let isEditing = false;
+let pendingRender = false;
 
 function setCallbacks(loadPdfFn, regenAllFn) {
   loadPdfCallback = loadPdfFn;
@@ -12,6 +14,10 @@ function setCallbacks(loadPdfFn, regenAllFn) {
 }
 
 function renderSidebar() {
+  if (isEditing) {
+    pendingRender = true;
+    return;
+  }
   renderHistoryList();
   renderFavoriteList();
   updateTabCounts();
@@ -162,7 +168,12 @@ function createSidebarListItem(doc, draggedItem, ul, isFavorite) {
   });
 
   const name = document.createElement("span");
-  name.textContent = doc.name.replace(/\.pdf$/i, "");
+  const displayName = doc.alias && doc.alias.trim()
+    ? doc.alias.trim()
+    : doc.title && doc.title.trim()
+      ? doc.title.trim()
+      : doc.name.replace(/\.pdf$/i, "");
+  name.textContent = displayName;
   name.style.flex = "1";
   name.style.overflow = "hidden";
   name.style.textOverflow = "ellipsis";
@@ -170,9 +181,6 @@ function createSidebarListItem(doc, draggedItem, ul, isFavorite) {
 
   const actions = document.createElement("div");
   actions.className = "item-action";
-  actions.style.display = "flex";
-  actions.style.alignItems = "center";
-  actions.style.gap = "4px";
 
   const favBtn = document.createElement("img");
   favBtn.src = doc.isFavorite
@@ -189,6 +197,59 @@ function createSidebarListItem(doc, draggedItem, ul, isFavorite) {
     DocManager.toggleFavorite(doc.path);
   });
 
+  const editBtn = document.createElement("img");
+  editBtn.src = "../src/images/edit-text.png";
+  editBtn.width = 14;
+  editBtn.height = 14;
+  editBtn.style.opacity = "0.6";
+  editBtn.style.cursor = "pointer";
+  editBtn.title = "제목 편집";
+
+  editBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (li.querySelector(".inline-edit")) return;
+
+    const current = doc.alias && doc.alias.trim() ? doc.alias.trim() : "";
+    name.style.display = "none";
+    actions.style.display = "none";
+    isEditing = true;
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "inline-edit";
+    input.value = current;
+    input.style.cssText = "flex:1;font-size:12px;padding:1px 4px;border:1px solid var(--border);border-radius:3px;background:var(--bg-secondary);color:inherit;outline:none;min-width:0;";
+    li.insertBefore(input, name);
+    input.focus();
+    input.select();
+
+    let committed = false;
+    const dismiss = () => {
+      if (input.parentNode) input.remove();
+      name.style.display = "";
+      actions.style.display = "";
+      isEditing = false;
+      if (pendingRender) {
+        pendingRender = false;
+        renderSidebar();
+      }
+    };
+    const commit = () => {
+      if (committed) return;
+      committed = true;
+      const alias = input.value.trim();
+      DocManager.save(doc.path, { alias });
+      dismiss();
+    };
+
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") { ev.preventDefault(); input.blur(); }
+      if (ev.key === "Escape") { ev.preventDefault(); committed = true; dismiss(); }
+    });
+    input.addEventListener("blur", commit);
+  });
+
+  actions.appendChild(editBtn);
   actions.appendChild(favBtn);
 
   if (!isFavorite) {

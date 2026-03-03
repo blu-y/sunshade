@@ -432,17 +432,24 @@
         font-size: 12px;
       }
       .item-action {
-        margin-left: auto;
+        position: absolute;
+        right: 8px;
         opacity: 0;
         transition: opacity 0.2s;
         display: flex;
         align-items: center;
+        gap: 4px;
+        padding-left: 8px;
       }
       .item-action img {
         filter: var(--icon-filter);
       }
       .side-nav-list li:hover .item-action {
         opacity: 1;
+        background: var(--accent-bg);
+      }
+      .side-nav-list li.active .item-action {
+        background: var(--accent-bg);
       }
       .side-nav li {
         padding: 8px 6px;

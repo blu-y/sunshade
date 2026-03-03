@@ -4,7 +4,7 @@ import { logMessage, showToast } from "./uiHelpers.js";
 import { applyHighlightMode, saveHighlights, setupHighlightEventHandlers, getHighlightsData } from "./highlights.js";
 import { loadOutline, updateOutlineHighlight } from "./outline.js";
 import { updateSummaryPlaceholders, generateSummaries } from "./summarization.js";
-import { renderMarkdownToHtml, renderInlineMathOnly, parseBriefLines } from "./textProcessors.js";
+import { renderKeywords, renderMarkdownToHtml, renderInlineMathOnly, parseBriefLines } from "./textProcessors.js";
 import { renderSidebar } from "./sidebar.js";
 
 let pdfViewer = null;
@@ -146,6 +146,46 @@ async function loadPdfImpl(input) {
     const pdfDoc = await loadingTask.promise;
     state.pdfDocumentProxy = pdfDoc;
 
+    // Extract PDF metadata title immediately after loading PDF
+    let pdfTitle = null;
+    try {
+      const metadata = await pdfDoc.getMetadata();
+      if (metadata && metadata.info && metadata.info.Title) {
+        pdfTitle = metadata.info.Title;
+      }
+    } catch (e) {
+      // Metadata extraction failed, will use filename fallback
+    }
+
+    async function generateTitleWithAI(text) {
+      if (!text || text.length < 50) {
+        console.warn("Text too short for AI title generation");
+        return null;
+      }
+
+      const instructions = "Extract the paper title from the following text. Return ONLY the title, no explanation.";
+      const messages = [{ role: "user", content: text.slice(0, 2000) }];
+
+      try {
+        const response = await window.sunshadeAPI.openaiChatCompletion(messages, instructions);
+
+        let result = response.reply?.trim();
+
+        // Clean up AI response
+        if (result) {
+          result = result.replace(/^(Title:|The title is:|Paper title:|)\s*/i, "");
+          result = result.replace(/^["'](.+)["']$/, "$1");
+          result = result.trim();
+        }
+
+        console.log("AI-generated title:", result);
+        return result;
+      } catch (error) {
+        console.error("AI title generation failed:", error);
+        return null;
+      }
+    }
+
     pdfViewer.setDocument(pdfDoc);
     pdfLinkService.setDocument(pdfDoc, null);
     applyHighlightMode(false);
@@ -197,7 +237,8 @@ async function loadPdfImpl(input) {
     }
     if (uiRefs.chatEmpty) uiRefs.chatEmpty.style.display = "block";
 
-    renderSidebar();
+    // Don't call renderSidebar() here - it will be triggered by "doc-update" event
+    // when DocManager.save() completes below
 
     if (cached && cached.analysis) {
       console.log("Restoring from cache:", filePath);
@@ -217,6 +258,7 @@ async function loadPdfImpl(input) {
 
         if (hasKeywords) {
           state.lastKeywordsRaw = cached.analysis.keywords;
+          renderKeywords(state.lastKeywordsRaw, uiRefs.keywordsBody, state.lastKeywordsList);
         }
         if (hasBrief) {
           state.lastBriefRaw = cached.analysis.brief;
@@ -275,11 +317,22 @@ async function loadPdfImpl(input) {
 
       DocManager.save(filePath, {
         name: fileName,
+        title: pdfTitle,
         extractedText: state.lastExtractedText,
       });
     }
 
     console.log(`Loaded PDF: ${fileName} (${pdfDoc.numPages} pages)`);
+
+    // Generate AI title after all loading is complete (non-blocking)
+    if (!pdfTitle && !cachedDoc?.title && !cachedDoc?.alias) {
+      generateTitleWithAI(state.lastExtractedText).then((aiTitle) => {
+        if (aiTitle) {
+          console.log("AI-generated title (deferred):", aiTitle);
+          DocManager.save(filePath, { title: aiTitle });
+        }
+      });
+    }
 
   } catch (err) {
     logMessage(`PDF load failed: ${err.message}`, "error");

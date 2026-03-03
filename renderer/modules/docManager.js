@@ -13,7 +13,7 @@ const DocManager = {
       } else {
         this._cache = {};
       }
-      this.notifyUpdate();
+      // Don't notify on initial load - sidebar will be rendered separately
     } catch (e) {
       console.error("Failed to init DocManager index:", e);
     }
