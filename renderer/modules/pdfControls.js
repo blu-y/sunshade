@@ -1,7 +1,7 @@
 import { pdfjsLib, PDFViewer, pdfLinkService, state, uiRefs, eventBus } from "./config.js";
 import { DocManager } from "./docManager.js";
 import { logMessage, showToast } from "./uiHelpers.js";
-import { applyHighlightMode, saveHighlights, setupHighlightEventHandlers, getHighlightsData } from "./highlights.js";
+import { applyHighlightMode, saveHighlights, setupHighlightEventHandlers, getHighlightsData, resetHighlightTracking } from "./highlights.js";
 import { loadOutline, updateOutlineHighlight } from "./outline.js";
 import { updateSummaryPlaceholders, generateSummaries } from "./summarization.js";
 import { renderKeywords, renderMarkdownToHtml, renderInlineMathOnly, parseBriefLines } from "./textProcessors.js";
@@ -126,6 +126,7 @@ async function loadPdfImpl(input) {
 
     console.log("Loading PDF from:", filePath);
     state.currentPdfPath = filePath;
+    resetHighlightTracking();
     const cachedDoc = DocManager.get(filePath);
     let cached = cachedDoc;
     let heavyData = null;
@@ -653,7 +654,7 @@ function setupModelSelector() {
     uiRefs.currentModelName.textContent = state.currentModel;
     localStorage.setItem("sunshade-model", state.currentModel);
 
-    document.querySelectorAll(".model-option").forEach((el) => el.classList.remove("selected"));
+    document.querySelectorAll(".model-option").forEach((el) => { el.classList.remove("selected"); });
     option.classList.add("selected");
     uiRefs.modelDropdown.classList.remove("show");
 

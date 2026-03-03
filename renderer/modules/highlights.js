@@ -10,6 +10,10 @@ import { DocManager } from "./docManager.js";
 
 let editToolbarObserver = null;
 
+// 원본 하이라이트 데이터를 추적하여, 아직 렌더링되지 않은 페이지의 하이라이트 유실 방지
+let _originalHighlights = [];   // 디스크에서 로드한 전체 하이라이트
+let _restoredPages = new Set();  // annotationStorage에 복원 완료된 페이지 인덱스
+
 function normalizeEditToolbar(toolbar) {
   if (!toolbar) return;
   if (toolbar.classList.contains("editorParamsToolbar")) return;
@@ -98,7 +102,8 @@ function applyHighlightMode(enabled) {
 
 function getHighlightsData() {
   if (!state.pdfDocumentProxy) return null;
-  const highlights = [];
+  const fromStorage = [];
+  const storedPageIndices = new Set();
   const storage = state.pdfDocumentProxy.annotationStorage;
   if (storage && storage.size > 0) {
     const { map } = storage.serializable;
@@ -109,13 +114,18 @@ function getHighlightsData() {
           if (data.quadPoints && !(data.quadPoints instanceof Array)) {
             data.quadPoints = Array.from(data.quadPoints);
           }
-          // outlines는 가끔 복구에 필요할 수 있으므로 포함 (용량이 아주 크지 않음)
-          highlights.push({ ...data, id: undefined, storageKey: key });
+          fromStorage.push({ ...data, id: undefined, storageKey: key });
+          storedPageIndices.add(data.pageIndex);
         }
       }
     }
   }
-  return highlights;
+
+  const unrestoredHighlights = _originalHighlights.filter(
+    (h) => !_restoredPages.has(h.pageIndex) && !storedPageIndices.has(h.pageIndex)
+  );
+
+  return [...fromStorage, ...unrestoredHighlights];
 }
 
 function saveHighlights() {
@@ -134,6 +144,8 @@ async function restoreHighlights(pdfViewer) {
   if (!state.pdfDocumentProxy || !state.currentPdfPath) return;
   const heavyData = await DocManager.getHeavy(state.currentPdfPath);
   if (!heavyData?.highlights?.length) return;
+
+  _originalHighlights = heavyData.highlights;
 
   const uiManager = pdfViewer._layerProperties?.annotationEditorUIManager;
   if (!uiManager) return;
@@ -154,6 +166,7 @@ async function restoreHighlights(pdfViewer) {
     const layer = uiManager.getLayer(pageIndex);
     if (!layer) return;
     restoredPages.add(pageIndex);
+    _restoredPages.add(pageIndex);
 
     const scrollEl = uiRefs.viewerContainer;
     const scrollTop = scrollEl ? scrollEl.scrollTop : 0;
@@ -316,6 +329,11 @@ function setupGlobalToolbarObserver() {
   }
 }
 
+function resetHighlightTracking() {
+  _originalHighlights = [];
+  _restoredPages = new Set();
+}
+
 export {
   setupEditToolbarObserver,
   applyHighlightMode,
@@ -324,4 +342,5 @@ export {
   setupHighlightEventHandlers,
   setupGlobalToolbarObserver,
   getHighlightsData,
+  resetHighlightTracking,
 };
