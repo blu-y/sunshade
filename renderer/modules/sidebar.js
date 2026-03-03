@@ -63,10 +63,10 @@ function renderHistoryList() {
   ul.className = "side-nav-list";
   ul.style.marginTop = "0";
 
-  let draggedItem = null;
+  const dragState = { current: null };
 
   list.forEach((doc) => {
-    const li = createSidebarListItem(doc, draggedItem, ul, false);
+    const li = createSidebarListItem(doc, dragState, ul, false);
     ul.appendChild(li);
   });
 
@@ -93,30 +93,30 @@ function renderFavoriteList() {
   ul.className = "side-nav-list";
   ul.style.marginTop = "0";
 
-  let draggedItem = null;
+  const dragState = { current: null };
 
   list.forEach((doc) => {
-    const li = createSidebarListItem(doc, draggedItem, ul, true);
+    const li = createSidebarListItem(doc, dragState, ul, true);
     ul.appendChild(li);
   });
 
   favView.appendChild(ul);
 }
 
-function createSidebarListItem(doc, draggedItem, ul, isFavorite) {
+function createSidebarListItem(doc, dragState, ul, isFavorite) {
   const li = document.createElement("li");
   li.title = doc.path;
   li.dataset.path = doc.path;
   li.draggable = true;
 
   li.addEventListener("dragstart", (e) => {
-    draggedItem = li;
+    dragState.current = li;
     li.style.opacity = "0.5";
     e.dataTransfer.effectAllowed = "move";
   });
 
   li.addEventListener("dragend", () => {
-    draggedItem = null;
+    dragState.current = null;
     li.style.opacity = "1";
     document.querySelectorAll(".side-nav-list li").forEach((el) => {
       el.classList.remove("drop-above", "drop-below");
@@ -125,7 +125,7 @@ function createSidebarListItem(doc, draggedItem, ul, isFavorite) {
 
   li.addEventListener("dragover", (e) => {
     e.preventDefault();
-    if (!draggedItem || draggedItem === li) return;
+    if (!dragState.current || dragState.current === li) return;
 
     const bounding = li.getBoundingClientRect();
     const offset = bounding.y + bounding.height / 2;
@@ -152,15 +152,15 @@ function createSidebarListItem(doc, draggedItem, ul, isFavorite) {
   li.addEventListener("drop", (e) => {
     e.preventDefault();
     li.classList.remove("drop-above", "drop-below");
-    if (!draggedItem || draggedItem === li) return;
+    if (!dragState.current || dragState.current === li) return;
 
     const bounding = li.getBoundingClientRect();
     const offset = bounding.y + bounding.height / 2;
 
     if (e.clientY - offset > 0) {
-      li.after(draggedItem);
+      li.after(dragState.current);
     } else {
-      li.before(draggedItem);
+      li.before(dragState.current);
     }
 
     const newOrderPaths = Array.from(ul.children).map(child => child.dataset.path);
